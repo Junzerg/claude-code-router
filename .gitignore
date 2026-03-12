@@ -1,12 +1,46 @@
-node_modules
-.env
-log.txt
-.idea
-dist
-.DS_Store
-.vscode
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build and Testing
+dist/
+build/
+coverage/
+.nyc_output/
 tsconfig.tsbuildinfo
 
 # Documentation build output
-docs/build
-docs/.docusaurus
+docs/build/
+docs/.docusaurus/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+log.txt
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS Files
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# IDE and Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# AI Assistants & Workspaces
+.gemini/
+.claude/settings.local.json

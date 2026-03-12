@@ -7,6 +7,14 @@ import { CLAUDE_PROJECTS_DIR, HOME_DIR } from "@CCR/shared";
 import { LRUCache } from "lru-cache";
 import { ConfigService } from "../services/config";
 import { TokenizerService } from "../services/tokenizer";
+import { PoolManager } from "../services/pool-manager";
+import { ConcurrencyManager } from "../services/concurrency-manager";
+import { PoolRouter } from "../services/pool-router";
+import { PoolStorage, createPoolStorage } from "../services/pool-storage";
+import { BindingStorage, createBindingStorage } from "../services/binding-storage";
+import { AlertService, createAlertService } from "../services/alerts";
+import { UsageHistoryService, createUsageHistoryService } from "../services/usage-history";
+import { SmartRouter, createSmartRouter } from "../services/smart-router";
 
 // Types from @anthropic-ai/sdk
 interface Tool {
@@ -127,6 +135,36 @@ const getUseModel = async (
   configService: ConfigService,
   lastUsage?: Usage | undefined
 ): Promise<{ model: string; scenarioType: RouterScenarioType }> => {
+  // Check if pool router is available and should be used
+  const poolRouter = getPoolRouter();
+  if (poolRouter) {
+    try {
+      // Generate a default sessionId if not present and store it in req
+      req.sessionId = req.sessionId || `default-${Date.now()}`;
+      const selection = await poolRouter.selectAccount({
+        sessionId: req.sessionId,
+        body: req.body,
+      });
+
+      // Get the account details
+      const account = poolRouter.getPoolManager().getAccount(selection.accountId);
+      if (account) {
+        // Store account info in request for later use
+        req.poolAccount = account;
+        // Get the default model from Router config
+        const Router = configService.get("Router");
+        const defaultModel = Router?.default || "claude-sonnet-4-20250514";
+        // Return the default model - the pool account credentials will be used
+        return {
+          model: defaultModel,
+          scenarioType: 'default',
+        };
+      }
+    } catch (error: any) {
+      req.log.warn(`[PoolRouter] Failed to select account: ${error.message}, falling back to default router`);
+    }
+  }
+
   const projectSpecificRouter = await getProjectSpecificRouter(req, configService);
   const providers = configService.get<any[]>("providers") || [];
   const Router = projectSpecificRouter || configService.get("Router");
@@ -213,6 +251,142 @@ export interface RouterFallbackConfig {
   think?: string[];
   longContext?: string[];
   webSearch?: string[];
+}
+
+// Global pool router instance (lazy initialization)
+let poolRouterInstance: PoolRouter | null = null;
+let poolRouterInitialized = false;
+let poolStorageInstance: PoolStorage | null = null;
+let bindingStorageInstance: BindingStorage | null = null;
+let alertServiceInstance: AlertService | null = null;
+let usageHistoryServiceInstance: UsageHistoryService | null = null;
+let smartRouterInstance: SmartRouter | null = null;
+
+/**
+ * Initialize the pool router
+ * @param configService - ConfigService instance
+ */
+export function initPoolRouter(configService: ConfigService): PoolRouter | null {
+  if (poolRouterInstance) {
+    return poolRouterInstance;
+  }
+
+  try {
+    const codingPlanPoolConfig = configService.get("CodingPlanPool");
+
+    if (!codingPlanPoolConfig || !codingPlanPoolConfig.enabled) {
+      console.log('[PoolRouter] Pool not enabled in config');
+      return null;
+    }
+
+    // Create PoolStorage first for persistence
+    const poolManager = new PoolManager(codingPlanPoolConfig, () => {
+      // Save callback - mark storage as dirty
+      if (poolStorageInstance) {
+        poolStorageInstance.markDirty();
+      }
+    });
+    const concurrencyManager = new ConcurrencyManager(poolManager);
+
+    // Initialize storage for persistence (load existing config if available)
+    poolStorageInstance = createPoolStorage(poolManager);
+
+    poolRouterInstance = new PoolRouter(poolManager, concurrencyManager, codingPlanPoolConfig, undefined);
+    poolRouterInitialized = true;
+
+    // Initialize binding storage for session binding persistence
+    const sessionBinder = poolRouterInstance.getSessionBinder();
+    bindingStorageInstance = createBindingStorage(sessionBinder);
+
+    // Initialize alert service for monitoring
+    alertServiceInstance = createAlertService(poolManager, {
+      fiveHourWarningThreshold: 0.8,
+      fiveHourCriticalThreshold: 0.95,
+      weeklyWarningThreshold: 0.8,
+      weeklyCriticalThreshold: 0.95,
+      concurrencyWarningThreshold: 0.8,
+      maxAlertsInMemory: 100,
+    });
+
+    // Add webhook notification callback (placeholder for future implementation)
+    alertServiceInstance.onAlert(async (alert) => {
+      console.log(`[AlertService] ${alert.level.toUpperCase()}: ${alert.message}`);
+      // TODO: Implement webhook/email notification here
+    });
+
+    // Initialize usage history service for historical statistics
+    usageHistoryServiceInstance = createUsageHistoryService(
+      (accountId: string) => poolManager.getAccount(accountId),
+      {
+        maxRecordsPerAccount: 288, // 24 hours at 5-minute intervals
+        cleanupIntervalHours: 24,
+        verbose: false,
+      }
+    );
+
+    // Start automatic snapshot recording
+    usageHistoryServiceInstance.start(5);
+
+    // Initialize smart router for intelligent account selection
+    smartRouterInstance = createSmartRouter(usageHistoryServiceInstance, {
+      weights: { usage: 40, concurrency: 30, health: 30 },
+      enablePrediction: true,
+      minScoreThreshold: 0.3,
+      verbose: false,
+    });
+
+    // Set SmartRouter on PoolRouter
+    poolRouterInstance.setSmartRouter(smartRouterInstance);
+
+    console.log(`[PoolRouter] Initialized with ${poolManager.getAllAccounts().length} accounts`);
+    return poolRouterInstance;
+  } catch (error: any) {
+    console.error(`[PoolRouter] Failed to initialize: ${error.message}`);
+    poolRouterInitialized = false;
+    return null;
+  }
+}
+
+/**
+ * Get the pool router instance
+ */
+export function getPoolRouter(): PoolRouter | null {
+  return poolRouterInstance;
+}
+
+/**
+ * Get the pool storage instance
+ */
+export function getPoolStorage(): PoolStorage | null {
+  return poolStorageInstance;
+}
+
+/**
+ * Get the binding storage instance
+ */
+export function getBindingStorage(): BindingStorage | null {
+  return bindingStorageInstance;
+}
+
+/**
+ * Get the alert service instance
+ */
+export function getAlertService(): AlertService | null {
+  return alertServiceInstance;
+}
+
+/**
+ * Get the usage history service instance
+ */
+export function getUsageHistoryService(): UsageHistoryService | null {
+  return usageHistoryServiceInstance;
+}
+
+/**
+ * Get the smart router instance
+ */
+export function getSmartRouter(): SmartRouter | null {
+  return smartRouterInstance;
 }
 
 export const router = async (req: any, _res: any, context: RouterContext) => {

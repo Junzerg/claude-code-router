@@ -323,6 +323,83 @@ class ApiClient {
   async installPresetFromGitHub(repo: string, name?: string): Promise<any> {
     return this.post<any>('/presets/install/github', { repo, name });
   }
+
+  // ========== Pool API methods ==========
+
+  // Get pool status
+  async getPoolStatus(): Promise<{
+    summary: {
+      total: number;
+      active: number;
+      limited: number;
+      error: number;
+      disabled: number;
+      totalConcurrency: number;
+      availableConcurrency: number;
+      totalUsagePercentage: number;
+    };
+    accounts: Array<{
+      id: string;
+      name: string;
+      status: string;
+      concurrency: {
+        current: number;
+        max: number;
+        availableSlots: number;
+      };
+      usage: {
+        last5Hours: number;
+        last5HoursLimit: number;
+        usagePercent: number;
+        weekly: number;
+        weeklyLimit: number;
+      };
+      boundSessions: number;
+      lastUsedAt?: string;
+      limitedInfo?: {
+        since: string;
+        reason: string;
+        errorMessage?: string;
+        recoverAt?: string;
+      };
+    }>;
+    bindings: {
+      total: number;
+      ttlMinutes: number;
+    };
+  }> {
+    return this.get<any>('/pool/status');
+  }
+
+  // Get pool bindings
+  async getPoolBindings(): Promise<{
+    bindings: Array<{
+      sessionId: string;
+      accountId: string;
+      createdAt: string;
+      lastActiveAt: string;
+      updatedAt?: string;
+      ttlMinutes: number;
+    }>;
+    stats: {
+      totalBindings: number;
+      ttlMinutes: number;
+      breakOnLimited: boolean;
+      isCleanupRunning: boolean;
+    };
+  }> {
+    return this.get<any>('/pool/bindings');
+  }
+
+  // Clear pool bindings
+  async clearPoolBindings(): Promise<any> {
+    return this.post<any>('/pool/bindings/clear', {});
+  }
+
+  // Remove pool binding
+  async removePoolBinding(sessionId: string): Promise<any> {
+    return this.post<any>(`/pool/bindings/remove?sessionId=${encodeURIComponent(sessionId)}`, {});
+  }
 }
 
 // Create a default instance of the API client

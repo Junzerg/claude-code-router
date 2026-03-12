@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Claude Code Router is a tool that routes Claude Code requests to different LLM providers. It uses a Monorepo architecture with four main packages:
+Claude Code Router is a tool that routes Claude Code requests to different LLM providers. It uses a Monorepo architecture with five main packages:
 
-- **cli** (`@musistudio/claude-code-router`): Command-line tool providing the `ccr` command
-- **server** (`@CCR/server`): Core server handling API routing and transformations
+- **core** (`@musistudio/llms`): Core LLM API transformation server with transformers and routing logic (external published package)
+- **cli** (`@CCR/cli`): Command-line tool providing the `ccr` command
+- **server** (`@CCR/server`): Server wrapper that integrates core with CLI-specific features
 - **shared** (`@CCR/shared`): Shared constants, utilities, and preset management
 - **ui** (`@CCR/ui`): Web management interface (React + Vite)
 
@@ -20,26 +21,38 @@ pnpm build
 
 ### Build individual packages
 ```bash
+pnpm build:core     # Build core (@musistudio/llms)
+pnpm build:shared   # Build shared utilities
+pnpm build:server   # Build server
 pnpm build:cli      # Build CLI
-pnpm build:server   # Build Server
-pnpm build:ui       # Build UI
+pnpm build:ui       # Build UI (Vite)
+pnpm build:docs     # Build documentation
 ```
 
 ### Development mode
 ```bash
+pnpm dev:core       # Develop core (tsx watch)
+pnpm dev:server     # Develop server (ts-node)
 pnpm dev:cli        # Develop CLI (ts-node)
-pnpm dev:server     # Develop Server (ts-node)
-pnpm dev:ui         # Develop UI (Vite)
+pnpm dev:ui         # Develop UI (Vite HMR)
+pnpm dev:docs       # Develop documentation
+```
+
+### Linting
+```bash
+pnpm --filter @CCR/ui lint    # Run ESLint on UI package
 ```
 
 ### Publish
 ```bash
 pnpm release        # Build and publish all packages
+pnpm release:npm    # Publish to npm only
+pnpm release:docker # Build and push Docker image only
 ```
 
 ## Core Architecture
 
-### 1. Routing System (packages/server/src/utils/router.ts)
+### 1. Routing System (packages/core/src/utils/router.ts)
 
 The routing logic determines which model a request should be sent to:
 
@@ -55,19 +68,36 @@ The routing logic determines which model a request should be sent to:
 
 Token calculation uses `tiktoken` (cl100k_base) to estimate request size.
 
-### 2. Transformer System
+### 2. Core Package (`@musistudio/llms`)
 
-The project uses the `@musistudio/llms` package (external dependency) to handle request/response transformations. Transformers adapt to different provider API differences:
+The core package is the heart of the system, providing:
 
-- Built-in transformers: `anthropic`, `deepseek`, `gemini`, `openrouter`, `groq`, `maxtoken`, `tooluse`, `reasoning`, `enhancetool`, etc.
-- Custom transformers: Load external plugins via `transformers` array in `config.json`
+**Services** (`packages/core/src/services/`):
+- `config.ts`: Configuration management with JSON5 support
+- `provider.ts`: Provider registry and model discovery
+- `tokenizer.ts`: Token counting abstraction (supports tiktoken and HuggingFace tokenizers)
+- `transformer.ts`: Transformer registry and application logic
 
-Transformer configuration supports:
-- Global application (provider level)
-- Model-specific application
-- Option passing (e.g., `max_tokens` parameter for `maxtoken`)
+**Transformers** (`packages/core/src/transformer/`):
+- Built-in transformers for each provider: `anthropic`, `deepseek`, `gemini`, `openrouter`, `groq`, etc.
+- Functional transformers: `maxtoken`, `tooluse`, `reasoning`, `enhancetool`, `sampling`, etc.
+- Each transformer implements request/response transformation interfaces
 
-### 3. Agent System (packages/server/src/agents/)
+**SSE Processing** (`packages/core/src/utils/sse/`):
+- `SSEParserTransform`: Parses SSE text stream into event objects
+- `SSESerializerTransform`: Serializes event objects into SSE text stream
+- `rewriteStream`: Intercepts and modifies stream data (for agent tool calls)
+
+### 3. Transformer System (Application Level)
+
+The server layer uses transformers from core to handle request/response transformations:
+
+- **Global application**: Apply transformer to all models from a provider
+- **Model-specific application**: Apply transformer only to specific models
+- **Option passing**: Pass configuration to transformers (e.g., `max_tokens` for `maxtoken`)
+- **Custom transformers**: Load external plugins via `transformers` array in `config.json`
+
+### 4. Agent System (packages/server/src/agents/)
 
 Agents are pluggable feature modules that can:
 - Detect whether to handle a request (`shouldHandle`)
@@ -84,14 +114,14 @@ Agent tool call flow:
 4. Execute agent tool and initiate new LLM request
 5. Stream results back
 
-### 4. SSE Stream Processing
+### 5. SSE Stream Processing
 
 The server uses custom Transform streams to handle Server-Sent Events:
 - `SSEParserTransform`: Parses SSE text stream into event objects
 - `SSESerializerTransform`: Serializes event objects into SSE text stream
 - `rewriteStream`: Intercepts and modifies stream data (for agent tool calls)
 
-### 5. Configuration Management
+### 6. Configuration Management
 
 Configuration file location: `~/.claude-code-router/config.json`
 
@@ -105,7 +135,7 @@ Configuration validation:
 - If `Providers` are configured, both `HOST` and `APIKEY` must be set
 - Otherwise listens on `0.0.0.0` without authentication
 
-### 6. Logging System
+### 7. Logging System
 
 Two separate logging systems:
 
@@ -225,22 +255,31 @@ Key files:
 ## Dependencies
 
 ```
-cli → server → shared
-server → @musistudio/llms (core routing and transformation logic)
-ui (standalone frontend application)
+cli → server → core (@musistudio/llms) → shared
+server → shared
+ui (standalone, consumes server API)
+docs (standalone documentation site)
 ```
+
+The `@musistudio/llms` package is also published independently to npm and serves as the core transformation engine.
 
 ## Development Notes
 
-1. **Node.js version**: Requires >= 18.0.0
+1. **Node.js version**: Requires >= 20.0.0 ( enforced in `engines` field)
 2. **Package manager**: Uses pnpm (monorepo depends on workspace protocol)
-3. **TypeScript**: All packages use TypeScript, but UI package is ESM module
+3. **TypeScript**: All packages use TypeScript
+   - CLI/Server/Shared: CommonJS modules built with esbuild
+   - Core (`@musistudio/llms`): Dual ESM/CommonJS build
+   - UI: ESM module built with Vite
 4. **Build tools**:
+   - core: Custom esbuild script (dual ESM/CJS output)
    - cli/server/shared: esbuild
    - ui: Vite + TypeScript
-5. **@musistudio/llms**: This is an external dependency package providing the core server framework and transformer functionality, type definitions in `packages/server/src/types.d.ts`
-6. **Code comments**: All comments in code MUST be written in English
-7. **Documentation**: When implementing new features, add documentation to the docs project instead of creating standalone md files
+   - docs: Docusaurus (React-based static site generator)
+5. **Code comments**: All comments in code MUST be written in English
+6. **Documentation**: When implementing new features, add documentation to the docs project instead of creating standalone md files
+7. **Type definitions**: Core package exports type definitions in `dist/index.d.ts`; server layer type definitions in `packages/server/src/types.d.ts`
+8. **Testing**: Currently no formal test suite; development relies on manual testing and end-to-end usage
 
 ## Configuration Example Locations
 

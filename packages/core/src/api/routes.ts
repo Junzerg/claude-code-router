@@ -12,6 +12,7 @@ import { ConfigService } from "@/services/config";
 import { ProviderService } from "@/services/provider";
 import { TransformerService } from "@/services/transformer";
 import { Transformer } from "@/types/transformer";
+import { getPoolRouter, getUsageHistoryService, getSmartRouter } from "@/utils/router";
 
 // Extend FastifyInstance to include custom services
 declare module "fastify" {
@@ -39,15 +40,39 @@ async function handleTransformerEndpoint(
 ) {
   const body = req.body as any;
   const providerName = req.provider!;
-  const provider = fastify.providerService.getProvider(providerName);
+  let provider = fastify.providerService.getProvider(providerName);
 
-  // Validate provider exists
-  if (!provider) {
-    throw createApiError(
-      `Provider '${providerName}' not found`,
-      404,
-      "provider_not_found"
-    );
+  // Check if this is a Coding Plan pool request FIRST (before provider validation)
+  let poolAccount: any = null;
+  if ((req as any).poolAccount) {
+    poolAccount = (req as any).poolAccount;
+    req.log.info(`[PoolRouter] Using pool account: ${poolAccount.id}`);
+
+    // Create a temporary provider with pool account credentials
+    // This bypasses the need for a registered 'codingplan' provider
+    // Note: apiBaseUrl should be the full endpoint URL (e.g., https://open.bigmodel.cn/api/coding/paas/v4/chat/completions)
+    // If apiBaseUrl doesn't end with /chat/completions, append it
+    let baseUrl = poolAccount.apiBaseUrl;
+    if (baseUrl && !baseUrl.endsWith('/chat/completions')) {
+      baseUrl = baseUrl.replace(/\/$/, '') + '/chat/completions';
+    }
+    provider = {
+      name: `codingplan-${poolAccount.id}`,
+      apiKey: poolAccount.apiKey,
+      baseUrl: baseUrl,
+      models: [],
+      transformer: { use: [] },
+      _platform: poolAccount.platform,  // 保存平台类型用于认证头处理
+    };
+  } else {
+    // Validate provider exists only for non-pool requests
+    if (!provider) {
+      throw createApiError(
+        `Provider '${providerName}' not found`,
+        404,
+        "provider_not_found"
+      );
+    }
   }
 
   try {
@@ -334,8 +359,10 @@ async function sendRequestToProvider(
 
   // Send HTTP request
   // Prepare headers
+  // zai/zhipu 平台不需要 Bearer 前缀
+  const isZaiOrZhipu = provider._platform && ['zai', 'zhipu'].includes(provider._platform as string);
   const requestHeaders: Record<string, string> = {
-    Authorization: `Bearer ${provider.apiKey}`,
+    Authorization: isZaiOrZhipu ? provider.apiKey : `Bearer ${provider.apiKey}`,
     ...(config?.headers || {}),
   };
 
@@ -679,6 +706,227 @@ export const registerApiRoutes = async (
       };
     }
   );
+
+  // Pool binding API endpoints
+  fastify.get("/pool/bindings", async (req: FastifyRequest, reply: FastifyReply) => {
+    const poolRouter = getPoolRouter();
+    if (!poolRouter) {
+      return reply.code(503).send({ error: "Pool router not initialized" });
+    }
+
+    const sessionBinder = poolRouter.getSessionBinder();
+    const bindings = sessionBinder.getAllBindings();
+    const stats = sessionBinder.getStats();
+
+    return {
+      bindings,
+      stats,
+    };
+  });
+
+  fastify.post("/pool/bindings/clear", async (req: FastifyRequest, reply: FastifyReply) => {
+    const poolRouter = getPoolRouter();
+    if (!poolRouter) {
+      return reply.code(503).send({ error: "Pool router not initialized" });
+    }
+
+    const sessionBinder = poolRouter.getSessionBinder();
+    sessionBinder.clearAllBindings();
+
+    return {
+      message: "All bindings cleared",
+    };
+  });
+
+  fastify.post("/pool/bindings/remove", async (req: FastifyRequest, reply: FastifyReply) => {
+    const poolRouter = getPoolRouter();
+    if (!poolRouter) {
+      return reply.code(503).send({ error: "Pool router not initialized" });
+    }
+
+    const sessionId = (req.query as any).sessionId;
+    if (!sessionId) {
+      return reply.code(400).send({ error: "sessionId is required" });
+    }
+
+    const sessionBinder = poolRouter.getSessionBinder();
+    const removed = sessionBinder.unbind(sessionId);
+
+    if (!removed) {
+      return reply.code(404).send({ error: "Binding not found" });
+    }
+
+    return {
+      message: `Binding removed: ${sessionId}`,
+    };
+  });
+
+  // Pool status API endpoint
+  fastify.get("/pool/status", async (req: FastifyRequest, reply: FastifyReply) => {
+    const poolRouter = getPoolRouter();
+    if (!poolRouter) {
+      return reply.code(503).send({ error: "Pool router not initialized" });
+    }
+
+    const poolManager = poolRouter.getPoolManager();
+    const concurrencyManager = poolRouter.getConcurrencyManager();
+    const sessionBinder = poolRouter.getSessionBinder();
+
+    // Get all accounts with updated usage stats
+    const accounts = poolManager.getAllAccounts();
+    const bindings = sessionBinder.getAllBindings();
+    const poolStatus = poolManager.getPoolStatus();
+
+    // Build account status list with additional info
+    const accountStatusList = accounts.map(account => {
+      const boundSessions = bindings.filter(b => b.accountId === account.id);
+      const availableSlots = Math.max(0, account.concurrency.max - account.concurrency.current);
+      const usagePercent = account.config.last5HoursLimit > 0
+        ? (account.usage.last5Hours / account.config.last5HoursLimit) * 100
+        : 0;
+
+      return {
+        id: account.id,
+        name: account.name,
+        status: account.status,
+        concurrency: {
+          current: account.concurrency.current,
+          max: account.concurrency.max,
+          availableSlots,
+        },
+        usage: {
+          last5Hours: account.usage.last5Hours,
+          last5HoursLimit: account.config.last5HoursLimit,
+          usagePercent: Math.round(usagePercent * 100) / 100,
+          weekly: account.usage.weekly,
+          weeklyLimit: account.config.weeklyLimit,
+        },
+        boundSessions: boundSessions.length,
+        lastUsedAt: account.metadata.lastUsedAt,
+        limitedInfo: account.limitedInfo,
+      };
+    });
+
+    return {
+      summary: {
+        total: poolStatus.total,
+        active: poolStatus.active,
+        limited: poolStatus.limited,
+        error: poolStatus.error,
+        disabled: poolStatus.disabled,
+        totalConcurrency: poolStatus.totalConcurrency,
+        availableConcurrency: poolStatus.availableConcurrency,
+        totalUsagePercentage: Math.round(poolStatus.totalUsagePercentage * 10000) / 100,
+      },
+      accounts: accountStatusList,
+      bindings: {
+        total: bindings.length,
+        ttlMinutes: sessionBinder.getStats().ttlMinutes,
+      },
+    };
+  });
+
+  // Pool usage history API endpoints
+  fastify.get("/pool/history", async (req: FastifyRequest, reply: FastifyReply) => {
+    const usageHistory = getUsageHistoryService();
+    if (!usageHistory) {
+      return reply.code(503).send({ error: "Usage history service not initialized" });
+    }
+
+    const accountId = (req.query as any).accountId;
+    const limit = parseInt((req.query as any).limit) || 100;
+    const hours = parseInt((req.query as any).hours) || 24;
+
+    if (accountId) {
+      // Get history for specific account
+      const startTime = new Date(Date.now() - hours * 60 * 60 * 1000);
+      const history = usageHistory.getHistory(accountId, { startTime, limit });
+      const stats = usageHistory.getStats(accountId);
+
+      return {
+        accountId,
+        history,
+        stats,
+      };
+    } else {
+      // Get summary for all accounts
+      const accountIds = usageHistory.getAccountIds();
+      const summaries: any[] = [];
+
+      for (const id of accountIds) {
+        const stats = usageHistory.getStats(id);
+        summaries.push(stats);
+      }
+
+      return {
+        accounts: summaries,
+        total: accountIds.length,
+      };
+    }
+  });
+
+  fastify.get("/pool/history/trend", async (req: FastifyRequest, reply: FastifyReply) => {
+    const usageHistory = getUsageHistoryService();
+    if (!usageHistory) {
+      return reply.code(503).send({ error: "Usage history service not initialized" });
+    }
+
+    const accountId = (req.query as any).accountId;
+    if (!accountId) {
+      return reply.code(400).send({ error: "accountId is required" });
+    }
+
+    const hours = parseInt((req.query as any).hours) || 24;
+    const metric = (req.query as any).metric === 'weekly' ? 'weekly' : '5h';
+
+    const trend = usageHistory.getTrend(accountId, hours, metric);
+
+    return {
+      accountId,
+      metric,
+      hours,
+      trend,
+    };
+  });
+
+  fastify.get("/pool/history/prediction", async (req: FastifyRequest, reply: FastifyReply) => {
+    const usageHistory = getUsageHistoryService();
+    if (!usageHistory) {
+      return reply.code(503).send({ error: "Usage history service not initialized" });
+    }
+
+    const accountId = (req.query as any).accountId;
+    if (!accountId) {
+      return reply.code(400).send({ error: "accountId is required" });
+    }
+
+    const exhaustionTime = usageHistory.predictExhaustionTime(accountId);
+
+    return {
+      accountId,
+      predictedExhaustionTime: exhaustionTime?.toISOString() || null,
+      canPredict: exhaustionTime !== null,
+    };
+  });
+
+  // Smart router API endpoints
+  fastify.get("/pool/router/rankings", async (req: FastifyRequest, reply: FastifyReply) => {
+    const poolRouter = getPoolRouter();
+    const smartRouter = getSmartRouter();
+
+    if (!poolRouter || !smartRouter) {
+      return reply.code(503).send({ error: "Smart router not initialized" });
+    }
+
+    const accounts = poolRouter.getPoolManager().getAllAccounts();
+    const ranked = smartRouter.getRankedAccounts(accounts);
+    const stats = smartRouter.getStats();
+
+    return {
+      rankings: ranked,
+      stats,
+    };
+  });
 };
 
 // Helper function

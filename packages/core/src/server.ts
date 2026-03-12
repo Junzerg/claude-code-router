@@ -31,7 +31,7 @@ import { registerApiRoutes } from "./api/routes";
 import { ProviderService } from "./services/provider";
 import { TransformerService } from "./services/transformer";
 import { TokenizerService } from "./services/tokenizer";
-import { router, calculateTokenCount, searchProjectBySession } from "./utils/router";
+import { router, calculateTokenCount, searchProjectBySession, initPoolRouter, getPoolRouter } from "./utils/router";
 import { sessionUsageCache } from "./utils/cache";
 
 // Extend FastifyRequest to include custom properties
@@ -99,6 +99,8 @@ class Server {
     this.tokenizerService.initialize().catch((error) => {
       this.app.log.error(`Failed to initialize TokenizerService: ${error}`);
     });
+    // Initialize pool router (for Coding Plan account pool)
+    initPoolRouter(this.configService);
   }
 
   async register<Options extends FastifyPluginOptions = FastifyPluginOptions>(
@@ -233,6 +235,22 @@ class Server {
             } catch (err) {
               req.log.error({error: err}, "Error in modelProviderMiddleware:");
               return reply.code(500).send({ error: "Internal server error" });
+            }
+          }
+        }
+      );
+
+      // Add onResponse hook to release pool concurrency slot
+      this.app.addHook(
+        "onResponse",
+        async (req: FastifyRequest, reply: FastifyReply) => {
+          const url = new URL(`http://127.0.0.1${req.url}`);
+          if (url.pathname.endsWith("/v1/messages")) {
+            const sessionId = (req as any).sessionId;
+            const poolRouter = getPoolRouter();
+            if (sessionId && poolRouter) {
+              // Release concurrency slot after response is sent
+              await poolRouter.onRequestComplete(sessionId);
             }
           }
         }

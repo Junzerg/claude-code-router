@@ -18,6 +18,7 @@ import { join } from "path";
 import { parseStatusLineData, StatusLineInput } from "./utils/statusline";
 import {handlePresetCommand} from "./utils/preset";
 import { handleInstallCommand } from "./utils/installCommand";
+import { handlePoolCommand } from "./utils/pool";
 
 
 const command = process.argv[2];
@@ -36,6 +37,7 @@ const KNOWN_COMMANDS = [
   "activate",
   "env",
   "ui",
+  "pool",
   "-v",
   "version",
   "-h",
@@ -57,6 +59,7 @@ Commands:
   install       Install preset from GitHub marketplace
   activate      Output environment variables for shell integration
   ui            Open the web UI in browser
+  pool          Manage Z.ai Coding Plan account pool
   -v, version   Show version information
   -h, help      Show help information
 
@@ -72,6 +75,9 @@ Examples:
   ccr preset install /path/to/preset     # Install a preset from directory
   ccr preset list                        # List all presets
   ccr install my-preset                  # Install preset from marketplace
+  ccr pool add                           # Add account to pool
+  ccr pool list                          # List all accounts
+  ccr pool remove <accountId>            # Remove account from pool
   eval "$(ccr activate)"  # Set environment variables globally
   ccr ui
 `;
@@ -271,6 +277,9 @@ async function main() {
     case "install":
       const presetName = process.argv[3];
       await handleInstallCommand(presetName);
+      break;
+    case "pool":
+      await handlePoolCommand(process.argv.slice(3));
       break;
     case "activate":
     case "env":
