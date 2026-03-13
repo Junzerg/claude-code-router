@@ -51,15 +51,7 @@ export class ConcurrencyManager {
       return false;
     }
 
-    // Check if already at max concurrency
-    if (account.concurrency.current >= account.concurrency.max) {
-      console.debug(
-        `[ConcurrencyManager] Account ${accountId} at max concurrency (${account.concurrency.current}/${account.concurrency.max})`
-      );
-      return false;
-    }
-
-    // Check if already occupied by this session
+    // Check if already occupied by this session (do this before max concurrency check)
     if (account.concurrency.slots?.has(sessionId)) {
       console.debug(
         `[ConcurrencyManager] Session ${sessionId} already has slot on account ${accountId}`
@@ -71,6 +63,14 @@ export class ConcurrencyManager {
         this.sessionSlots.set(sessionId, slotInfo);
       }
       return true;
+    }
+
+    // Check if already at max concurrency
+    if (account.concurrency.current >= account.concurrency.max) {
+      console.debug(
+        `[ConcurrencyManager] Account ${accountId} at max concurrency (${account.concurrency.current}/${account.concurrency.max})`
+      );
+      return false;
     }
 
     // Acquire the slot

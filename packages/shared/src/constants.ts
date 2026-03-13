@@ -30,3 +30,9 @@ export const DEFAULT_CONFIG: DefaultConfig = {
   OPENAI_BASE_URL: "",
   OPENAI_MODEL: "",
 };
+
+// Coding Plan Pool Defaults
+export const POOL_DEFAULT_MAX_CONCURRENCY = 3;
+export const POOL_DEFAULT_BUFFER_RATIO = 0.1;
+export const POOL_DEFAULT_LAST_5_HOURS_LIMIT = 100000;
+export const POOL_DEFAULT_WEEKLY_LIMIT = 500000;

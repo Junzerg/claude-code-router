@@ -14,118 +14,11 @@ const BOLDRED = '\x1B[1m\x1B[31m';
 const BOLDGREEN = '\x1B[1m\x1B[32m';
 const DIM = '\x1B[2m';
 
-// Pool config file path
-const POOL_CONFIG_DIR = path.join(
-  process.env.HOME || process.env.USERPROFILE || '',
-  '.claude-code-router'
-);
-const POOL_CONFIG_FILE = path.join(POOL_CONFIG_DIR, 'pool-config.json');
-
-// Server config for API access
-const SERVER_CONFIG_FILE = path.join(POOL_CONFIG_DIR, 'config.json');
-
-/**
- * Coding Plan Account interface
- */
-interface CodingPlanAccount {
-  id: string;
-  name: string;
-  platform: 'zai' | 'zhipu';
-  apiKey: string;
-  apiBaseUrl: string;
-  status: 'active' | 'limited' | 'error' | 'disabled';
-  concurrency: {
-    current: number;
-    max: number;
-    lastUpdated: Date;
-  };
-  usage: {
-    last5Hours: number;
-    weekly: number;
-    last5HoursLimit: number;
-    weeklyLimit: number;
-    lastSyncedAt?: Date;
-  };
-  config: {
-    maxConcurrency: number;
-    last5HoursLimit: number;
-    weeklyLimit: number;
-    bufferRatio: number;
-  };
-  metadata: {
-    createdAt: Date;
-    updatedAt: Date;
-    lastUsedAt?: Date;
-  };
-}
-
-/**
- * Pool Manager - Simple in-memory account pool management
- */
-class PoolManager {
-  private accounts: Map<string, CodingPlanAccount>;
-
-  constructor() {
-    this.accounts = new Map();
-  }
-
-  getAccount(accountId: string): CodingPlanAccount | undefined {
-    return this.accounts.get(accountId);
-  }
-
-  getAllAccounts(): CodingPlanAccount[] {
-    return Array.from(this.accounts.values());
-  }
-
-  importConfig(config: any): void {
-    if (config.accounts && Array.isArray(config.accounts)) {
-      for (const acc of config.accounts) {
-        this.accounts.set(acc.id, {
-          ...acc,
-          metadata: {
-            ...acc.metadata,
-            createdAt: new Date(acc.metadata?.createdAt),
-            updatedAt: new Date(acc.metadata?.updatedAt),
-          },
-          concurrency: {
-            ...acc.concurrency,
-            lastUpdated: new Date(acc.concurrency?.lastUpdated),
-          },
-          usage: {
-            ...acc.usage,
-            lastSyncedAt: acc.usage?.lastSyncedAt ? new Date(acc.usage.lastSyncedAt) : undefined,
-          },
-        });
-      }
-    }
-  }
-
-  exportConfig(): any {
-    return {
-      accounts: Array.from(this.accounts.values()),
-    };
-  }
-}
-
-/**
- * Load pool configuration from file
- */
-async function loadPoolManager(): Promise<PoolManager> {
-  const poolManager = new PoolManager();
-
-  try {
-    await fs.access(POOL_CONFIG_FILE);
-    const content = await fs.readFile(POOL_CONFIG_FILE, 'utf-8');
-    const config = JSON.parse(content);
-    poolManager.importConfig(config);
-  } catch (error: any) {
-    if (error.code !== 'ENOENT') {
-      console.warn(`${YELLOW}Warning: Failed to load pool config: ${error.message}${RESET}`);
-    }
-  }
-
-  return poolManager;
-}
+import { 
+  CodingPlanAccount, 
+  loadPoolManager
+} from '../utils/pool-client';
+import { CONFIG_FILE } from '@CCR/shared';
 
 /**
  * Fetch real-time pool status from running server API
@@ -136,7 +29,7 @@ async function fetchRealTimeStatus(): Promise<{ summary: any; accounts: CodingPl
     let port = 3456;
     let apiKey = '';
     try {
-      const configContent = await fs.readFile(SERVER_CONFIG_FILE, 'utf-8');
+      const configContent = await fs.readFile(CONFIG_FILE, 'utf-8');
       const config = JSON.parse(configContent);
       port = config.PORT || 3456;
       apiKey = config.APIKEY || '';

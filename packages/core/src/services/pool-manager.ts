@@ -7,6 +7,12 @@ import {
   UsageState,
 } from '../types/pool';
 import { UsageTracker } from './usage-tracker';
+import { 
+  POOL_DEFAULT_MAX_CONCURRENCY,
+  POOL_DEFAULT_BUFFER_RATIO,
+  POOL_DEFAULT_LAST_5_HOURS_LIMIT,
+  POOL_DEFAULT_WEEKLY_LIMIT
+} from '@CCR/shared';
 
 /**
  * Generate unique account ID
@@ -51,8 +57,8 @@ export class PoolManager {
       enabled: config?.enabled ?? true,
       accounts: [],
       sessionBindings: new Map(),
-      defaultMaxConcurrency: config?.defaultMaxConcurrency ?? 3,
-      bufferRatio: config?.bufferRatio ?? 0.1,
+      defaultMaxConcurrency: config?.defaultMaxConcurrency ?? POOL_DEFAULT_MAX_CONCURRENCY,
+      bufferRatio: config?.bufferRatio ?? POOL_DEFAULT_BUFFER_RATIO,
       sessionBinding: {
         enabled: config?.sessionBinding?.enabled ?? true,
         ttlMinutes: config?.sessionBinding?.ttlMinutes ?? 60,
@@ -110,8 +116,8 @@ export class PoolManager {
     const maxConcurrency =
       accountData.maxConcurrency ?? this.config.defaultMaxConcurrency;
     const bufferRatio = accountData.bufferRatio ?? this.config.bufferRatio;
-    const last5HoursLimit = accountData.last5HoursLimit ?? 100000; // Default placeholder
-    const weeklyLimit = accountData.weeklyLimit ?? 500000; // Default placeholder
+    const last5HoursLimit = accountData.last5HoursLimit ?? POOL_DEFAULT_LAST_5_HOURS_LIMIT;
+    const weeklyLimit = accountData.weeklyLimit ?? POOL_DEFAULT_WEEKLY_LIMIT;
 
     const account: CodingPlanAccount = {
       id,
@@ -488,15 +494,15 @@ export class PoolManager {
           usage: {
             last5Hours: acc.usage?.last5Hours || 0,
             weekly: acc.usage?.weekly || 0,
-            last5HoursLimit: acc.usage?.last5HoursLimit || acc.config?.last5HoursLimit || 100000,
-            weeklyLimit: acc.usage?.weeklyLimit || acc.config?.weeklyLimit || 500000,
+            last5HoursLimit: acc.usage?.last5HoursLimit || acc.config?.last5HoursLimit || POOL_DEFAULT_LAST_5_HOURS_LIMIT,
+            weeklyLimit: acc.usage?.weeklyLimit || acc.config?.weeklyLimit || POOL_DEFAULT_WEEKLY_LIMIT,
             lastSyncedAt: acc.usage?.lastSyncedAt ? new Date(acc.usage.lastSyncedAt) : undefined,
             lastUpdated: acc.usage?.lastUpdated ? new Date(acc.usage.lastUpdated) : undefined,
           },
           config: {
             maxConcurrency: acc.config?.maxConcurrency || this.config.defaultMaxConcurrency,
-            last5HoursLimit: acc.config?.last5HoursLimit || 100000,
-            weeklyLimit: acc.config?.weeklyLimit || 500000,
+            last5HoursLimit: acc.config?.last5HoursLimit || POOL_DEFAULT_LAST_5_HOURS_LIMIT,
+            weeklyLimit: acc.config?.weeklyLimit || POOL_DEFAULT_WEEKLY_LIMIT,
             bufferRatio: acc.config?.bufferRatio || this.config.bufferRatio,
           },
           metadata: {
