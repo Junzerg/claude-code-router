@@ -203,6 +203,12 @@ export class PoolRouter {
     if (accountId) {
       await this.concurrencyManager.releaseSlot(accountId, sessionId);
 
+      // Update lastUsedAt on the account metadata
+      const account = this.poolManager.getAccount(accountId);
+      if (account) {
+        account.metadata.lastUsedAt = new Date();
+      }
+
       // Record success with SmartRouter for health tracking
       this.smartRouter?.recordRequest(accountId, success);
 
