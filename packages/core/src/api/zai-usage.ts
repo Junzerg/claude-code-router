@@ -180,7 +180,7 @@ export class ZaiUsageClient {
         {
           method: 'GET',
           headers: {
-            Authorization: this.apiKey,
+            Authorization: this.apiKey.startsWith('Bearer ') ? this.apiKey : `Bearer ${this.apiKey}`,
             'Accept-Language': 'en-US,en',
             'Content-Type': 'application/json',
           },
@@ -239,18 +239,25 @@ export class ZaiUsageClient {
   static parseQuotaPercentages(
     response: QuotaLimitResponse
   ): { last5HoursPercentage: number; weeklyPercentage: number } {
-    const tokenLimit = response.data.limits.find(
-      (l) => l.type === 'TOKENS_LIMIT'
-    );
-    const timeLimit = response.data.limits.find(
-      (l) => l.type === 'TIME_LIMIT'
-    );
+    const limits = response.data.limits;
 
+    // unit=3 → 5-hour token limit（每5小时）
+    const fiveHourLimit = limits.find(
+      (l) => l.type === 'TOKENS_LIMIT' && (l as any).unit === 3
+    ) || limits.find((l) => l.type === 'TOKENS_LIMIT');
+
+    // unit=6 → weekly token limit（每周）
+    const weeklyLimit = limits.find(
+      (l) => l.type === 'TOKENS_LIMIT' && (l as any).unit === 6
+    ) || limits.find((l) => l.type === 'TIME_LIMIT');
+
+    // API返回的 percentage 是整数（如 2 = 2%），转成小数 0~1 范围
     return {
-      last5HoursPercentage: tokenLimit?.percentage || 0,
-      weeklyPercentage: timeLimit?.percentage || 0,
+      last5HoursPercentage: (fiveHourLimit?.percentage || 0) / 100,
+      weeklyPercentage: (weeklyLimit?.percentage || 0) / 100,
     };
   }
+
 
   /**
    * Calculate total tokens from model usage

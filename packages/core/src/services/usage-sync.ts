@@ -208,8 +208,11 @@ export class UsageSyncService {
       const percentages = ZaiUsageClient.parseQuotaPercentages(quotaLimit);
 
       // Update account usage state
+      // Also back-calculate token counts from percentages × limits so UI progress bars work
       account.usage = {
         ...account.usage,
+        last5Hours: Math.round(percentages.last5HoursPercentage * account.config.last5HoursLimit),
+        weekly: Math.round(percentages.weeklyPercentage * account.config.weeklyLimit),
         last5HoursPercentage: percentages.last5HoursPercentage,
         weeklyPercentage: percentages.weeklyPercentage,
         lastSyncedAt: new Date(),

@@ -15,6 +15,7 @@ import { BindingStorage, createBindingStorage } from "../services/binding-storag
 import { AlertService, createAlertService } from "../services/alerts";
 import { UsageHistoryService, createUsageHistoryService } from "../services/usage-history";
 import { SmartRouter, createSmartRouter } from "../services/smart-router";
+import { UsageSyncService } from "../services/usage-sync";
 
 // Types from @anthropic-ai/sdk
 interface Tool {
@@ -261,6 +262,7 @@ let bindingStorageInstance: BindingStorage | null = null;
 let alertServiceInstance: AlertService | null = null;
 let usageHistoryServiceInstance: UsageHistoryService | null = null;
 let smartRouterInstance: SmartRouter | null = null;
+let usageSyncServiceInstance: UsageSyncService | null = null;
 
 /**
  * Initialize the pool router
@@ -346,6 +348,22 @@ export function initPoolRouter(configService: ConfigService): PoolRouter | null 
     // Set SmartRouter on PoolRouter
     poolRouterInstance.setSmartRouter(smartRouterInstance);
 
+    // Initialize and start UsageSyncService if enabled
+    const usageSyncConfig = codingPlanPoolConfig.usageSync;
+    if (usageSyncConfig?.enabled) {
+      usageSyncServiceInstance = new UsageSyncService(
+        poolManager,
+        { intervalMinutes: usageSyncConfig.intervalMinutes ?? 5 },
+        undefined,
+        alertServiceInstance,
+        usageHistoryServiceInstance
+      );
+      usageSyncServiceInstance.start();
+      console.log(`[PoolRouter] UsageSyncService started (interval: ${usageSyncConfig.intervalMinutes ?? 5}m)`);
+    } else {
+      console.log('[PoolRouter] UsageSyncService disabled (usageSync.enabled=false in pool-config.json)');
+    }
+
     // Start heartbeat check to automatically clean up zombie/orphaned concurrency slots
     concurrencyManager.startHeartbeatCheck(60000);
 
@@ -398,6 +416,13 @@ export function getUsageHistoryService(): UsageHistoryService | null {
  */
 export function getSmartRouter(): SmartRouter | null {
   return smartRouterInstance;
+}
+
+/**
+ * Get the usage sync service instance
+ */
+export function getUsageSyncService(): UsageSyncService | null {
+  return usageSyncServiceInstance;
 }
 
 export const router = async (req: any, _res: any, context: RouterContext) => {

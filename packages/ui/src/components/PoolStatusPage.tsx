@@ -338,7 +338,15 @@ export function PoolStatusPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {account.usage.weekly} / {account.usage.weeklyLimit}
+                        <div className="flex items-center gap-2">
+                          <span>{formatPercent(account.usage.weeklyLimit > 0 ? (account.usage.weekly / account.usage.weeklyLimit) * 100 : 0)}</span>
+                          <div className="w-20 bg-gray-200 rounded-full h-2">
+                            <div
+                              className={`h-2 rounded-full ${getUsageColor(account.usage.weeklyLimit > 0 ? (account.usage.weekly / account.usage.weeklyLimit) * 100 : 0)}`}
+                              style={{ width: `${Math.min(account.usage.weeklyLimit > 0 ? (account.usage.weekly / account.usage.weeklyLimit) * 100 : 0, 100)}%` }}
+                            />
+                          </div>
+                        </div>
                       </TableCell>
                       <TableCell>
                         {account.boundSessions > 0 ? (
