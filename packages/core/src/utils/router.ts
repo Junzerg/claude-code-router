@@ -1,6 +1,7 @@
 import { get_encoding } from "tiktoken";
 import { sessionUsageCache, Usage } from "./cache";
 import { readFile } from "fs/promises";
+import { readFileSync } from "fs";
 import { opendir, stat } from "fs/promises";
 import { join } from "path";
 import { CLAUDE_PROJECTS_DIR, HOME_DIR } from "@CCR/shared";
@@ -349,7 +350,15 @@ export function initPoolRouter(configService: ConfigService): PoolRouter | null 
     poolRouterInstance.setSmartRouter(smartRouterInstance);
 
     // Initialize and start UsageSyncService if enabled
-    const usageSyncConfig = codingPlanPoolConfig.usageSync;
+    // Check both config.json and pool-config.json for usageSync settings
+    let usageSyncConfig = codingPlanPoolConfig.usageSync;
+    if (!usageSyncConfig && poolStorageInstance) {
+      try {
+        const poolConfigPath = poolStorageInstance.getFilePath();
+        const poolConfigData = JSON.parse(readFileSync(poolConfigPath, 'utf-8'));
+        usageSyncConfig = poolConfigData?.pool?.usageSync;
+      } catch {}
+    }
     if (usageSyncConfig?.enabled) {
       usageSyncServiceInstance = new UsageSyncService(
         poolManager,
@@ -361,7 +370,7 @@ export function initPoolRouter(configService: ConfigService): PoolRouter | null 
       usageSyncServiceInstance.start();
       console.log(`[PoolRouter] UsageSyncService started (interval: ${usageSyncConfig.intervalMinutes ?? 5}m)`);
     } else {
-      console.log('[PoolRouter] UsageSyncService disabled (usageSync.enabled=false in pool-config.json)');
+      console.log('[PoolRouter] UsageSyncService disabled (usageSync.enabled not set in config)');
     }
 
     // Start heartbeat check to automatically clean up zombie/orphaned concurrency slots
