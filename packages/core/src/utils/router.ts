@@ -346,6 +346,9 @@ export function initPoolRouter(configService: ConfigService): PoolRouter | null 
     // Set SmartRouter on PoolRouter
     poolRouterInstance.setSmartRouter(smartRouterInstance);
 
+    // Start heartbeat check to automatically clean up zombie/orphaned concurrency slots
+    concurrencyManager.startHeartbeatCheck(60000);
+
     console.log(`[PoolRouter] Initialized with ${poolManager.getAllAccounts().length} accounts`);
     return poolRouterInstance;
   } catch (error: any) {

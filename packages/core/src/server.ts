@@ -240,7 +240,33 @@ class Server {
         }
       );
 
-      // Add onResponse hook to release pool concurrency slot
+      // Release pool concurrency slot when connection closes (handles both normal
+      // completion AND client disconnect during SSE streaming — the latter does NOT
+      // trigger Fastify's onResponse hook, which was the root cause of slot leaks)
+      this.app.addHook(
+        "onRequest",
+        async (req: FastifyRequest, reply: FastifyReply) => {
+          const url = new URL(`http://127.0.0.1${req.url}`);
+          if (url.pathname.endsWith("/v1/messages")) {
+            // Listen for raw socket close — fires on both normal end and client disconnect
+            req.raw.on("close", () => {
+              const sessionId = (req as any).sessionId;
+              const poolRouter = getPoolRouter();
+              if (sessionId && poolRouter && !(req as any)._poolSlotReleased) {
+                (req as any)._poolSlotReleased = true;
+                poolRouter.onRequestComplete(sessionId).catch((err: any) => {
+                  req.log.error(`[PoolRouter] Failed to release slot on close: ${err.message}`);
+                });
+                if (req.raw.destroyed || !req.raw.complete) {
+                  req.log.info(`[PoolRouter] Released slot on client disconnect: ${sessionId}`);
+                }
+              }
+            });
+          }
+        }
+      );
+
+      // Keep onResponse as safety net (fires for non-streaming or fully completed responses)
       this.app.addHook(
         "onResponse",
         async (req: FastifyRequest, reply: FastifyReply) => {
@@ -248,8 +274,8 @@ class Server {
           if (url.pathname.endsWith("/v1/messages")) {
             const sessionId = (req as any).sessionId;
             const poolRouter = getPoolRouter();
-            if (sessionId && poolRouter) {
-              // Release concurrency slot after response is sent
+            if (sessionId && poolRouter && !(req as any)._poolSlotReleased) {
+              (req as any)._poolSlotReleased = true;
               await poolRouter.onRequestComplete(sessionId);
             }
           }
