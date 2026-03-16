@@ -82,6 +82,26 @@ async function handleTransformerEndpoint(
     body.model = modelMapping[body.model];
   }
 
+  // Register pool slot cleanup on connection close (most reliable approach)
+  // At this point sessionId is set and slot is acquired, so cleanup is guaranteed
+  if (poolAccount && (req as any).sessionId) {
+    const sessionId = (req as any).sessionId;
+    const releaseSlot = () => {
+      if (!(req as any)._poolSlotReleased) {
+        (req as any)._poolSlotReleased = true;
+        const poolRouter = getPoolRouter();
+        if (poolRouter) {
+          poolRouter.onRequestComplete(sessionId).catch((err: any) => {
+            req.log.error(`[PoolRouter] Failed to release slot on close: ${err.message}`);
+          });
+          req.log.info(`[PoolRouter] Slot released via connection close: ${sessionId}`);
+        }
+      }
+    };
+    // reply.raw (ServerResponse) 'close' fires when connection ends for ANY reason
+    reply.raw.on('close', releaseSlot);
+  }
+
   try {
     // Process request transformer chain
     const { requestBody, config, bypass } = await processRequestTransformers(
