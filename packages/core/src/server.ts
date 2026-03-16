@@ -285,6 +285,7 @@ export { sessionUsageCache };
 export { router };
 export { calculateTokenCount };
 export { searchProjectBySession };
+export { getPoolRouter, getAlertService, getUsageHistoryService, getSmartRouter } from "./utils/router";
 export type { RouterScenarioType, RouterFallbackConfig } from "./utils/router";
 export { ConfigService } from "./services/config";
 export { ProviderService } from "./services/provider";

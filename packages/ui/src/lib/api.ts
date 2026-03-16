@@ -393,12 +393,12 @@ class ApiClient {
 
   // Clear pool bindings
   async clearPoolBindings(): Promise<any> {
-    return this.post<any>('/pool/bindings/clear', {});
+    return this.delete<any>('/pool/bindings');
   }
 
   // Remove pool binding
   async removePoolBinding(sessionId: string): Promise<any> {
-    return this.post<any>(`/pool/bindings/remove?sessionId=${encodeURIComponent(sessionId)}`, {});
+    return this.delete<any>(`/pool/bindings/${encodeURIComponent(sessionId)}`);
   }
 }
 

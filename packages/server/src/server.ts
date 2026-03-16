@@ -1,4 +1,5 @@
 import Server, { calculateTokenCount, TokenizerService } from "@musistudio/llms";
+import { getPoolRouter, getAlertService, getUsageHistoryService } from "@musistudio/llms";
 import { readConfigFile, writeConfigFile, backupConfigFile } from "./utils";
 import { join } from "path";
 import fastifyStatic from "@fastify/static";
@@ -483,6 +484,206 @@ export const createServer = async (config: any): Promise<any> => {
     const manifest = JSON.parse(entry.getData().toString('utf-8')) as ManifestFile;
     return manifestToPresetFile(manifest);
   }
+
+  // ================================
+  // Pool API Routes (Task 3.7.2)
+  // ================================
+
+  // GET /api/pool/status - 账号池汇总状态
+  app.get("/api/pool/status", async (req: any, reply: any) => {
+    try {
+      const poolRouter = getPoolRouter();
+      if (!poolRouter) {
+        return reply.code(503).send({ error: "Pool router not enabled" });
+      }
+
+      const poolManager = poolRouter.getPoolManager();
+      const accounts = poolManager.getAllAccounts();
+      const sessionBinder = poolRouter.getSessionBinder();
+      const bindings = sessionBinder.getAllBindings();
+
+      const summary = {
+        total: accounts.length,
+        active: accounts.filter((a: any) => a.status === "active").length,
+        limited: accounts.filter((a: any) => a.status === "limited").length,
+        error: accounts.filter((a: any) => a.status === "error").length,
+        disabled: accounts.filter((a: any) => a.status === "disabled").length,
+        totalConcurrency: accounts.reduce((sum: number, a: any) => sum + a.concurrency.max, 0),
+        availableConcurrency: accounts.reduce(
+          (sum: number, a: any) => sum + (a.concurrency.max - a.concurrency.current),
+          0
+        ),
+        totalUsagePercentage:
+          accounts.length > 0
+            ? accounts.reduce(
+                (sum: number, a: any) =>
+                  sum +
+                  (a.config.last5HoursLimit > 0
+                    ? (a.usage.last5Hours / a.config.last5HoursLimit) * 100
+                    : 0),
+                0
+              ) / accounts.length
+            : 0,
+      };
+
+      const accountList = accounts.map((acc: any) => {
+        const boundSessions = bindings.filter(
+          (b: any) => b.accountId === acc.id
+        ).length;
+        const usagePercent =
+          acc.config.last5HoursLimit > 0
+            ? (acc.usage.last5Hours / acc.config.last5HoursLimit) * 100
+            : 0;
+        return {
+          id: acc.id,
+          name: acc.name,
+          status: acc.status,
+          concurrency: {
+            current: acc.concurrency.current,
+            max: acc.concurrency.max,
+            availableSlots: acc.concurrency.max - acc.concurrency.current,
+          },
+          usage: {
+            last5Hours: acc.usage.last5Hours,
+            last5HoursLimit: acc.config.last5HoursLimit,
+            usagePercent,
+            weekly: acc.usage.weekly,
+            weeklyLimit: acc.config.weeklyLimit,
+          },
+          boundSessions,
+          lastUsedAt: acc.metadata.lastUsedAt?.toISOString(),
+          limitedInfo: acc.limitedInfo
+            ? {
+                since: acc.limitedInfo.since?.toISOString(),
+                reason: acc.limitedInfo.reason,
+                errorMessage: acc.limitedInfo.errorMessage,
+                recoverAt: acc.limitedInfo.recoverAt?.toISOString(),
+              }
+            : undefined,
+        };
+      });
+
+      return {
+        summary,
+        accounts: accountList,
+        bindings: {
+          total: bindings.length,
+          ttlMinutes: sessionBinder.getStats().ttlMinutes,
+        },
+      };
+    } catch (error: any) {
+      req.log?.error(`[Pool API] Failed to get status: ${error.message}`);
+      return reply.code(500).send({ error: "Failed to get pool status" });
+    }
+  });
+
+  // GET /api/pool/bindings - 会话绑定列表
+  app.get("/api/pool/bindings", async (req: any, reply: any) => {
+    try {
+      const poolRouter = getPoolRouter();
+      if (!poolRouter) {
+        return reply.code(503).send({ error: "Pool router not enabled" });
+      }
+
+      const sessionBinder = poolRouter.getSessionBinder();
+      const bindings = sessionBinder.getAllBindings().map((b: any) => ({
+        sessionId: b.sessionId,
+        accountId: b.accountId,
+        createdAt: b.createdAt.toISOString(),
+        lastActiveAt: b.lastActiveAt.toISOString(),
+        updatedAt: b.updatedAt?.toISOString(),
+        ttlMinutes: b.ttlMinutes,
+      }));
+
+      return { bindings };
+    } catch (error: any) {
+      req.log?.error(`[Pool API] Failed to get bindings: ${error.message}`);
+      return reply.code(500).send({ error: "Failed to get bindings" });
+    }
+  });
+
+  // DELETE /api/pool/bindings - 清除所有会话绑定
+  app.delete("/api/pool/bindings", async (req: any, reply: any) => {
+    try {
+      const poolRouter = getPoolRouter();
+      if (!poolRouter) {
+        return reply.code(503).send({ error: "Pool router not enabled" });
+      }
+
+      const sessionBinder = poolRouter.getSessionBinder();
+      const bindings = sessionBinder.getAllBindings();
+      for (const binding of bindings) {
+        sessionBinder.unbind(binding.sessionId);
+      }
+
+      return { success: true, clearedCount: bindings.length };
+    } catch (error: any) {
+      req.log?.error(`[Pool API] Failed to clear bindings: ${error.message}`);
+      return reply.code(500).send({ error: "Failed to clear bindings" });
+    }
+  });
+
+  // DELETE /api/pool/bindings/:sessionId - 删除单条会话绑定
+  app.delete("/api/pool/bindings/:sessionId", async (req: any, reply: any) => {
+    try {
+      const poolRouter = getPoolRouter();
+      if (!poolRouter) {
+        return reply.code(503).send({ error: "Pool router not enabled" });
+      }
+
+      const { sessionId } = req.params;
+      const sessionBinder = poolRouter.getSessionBinder();
+      const removed = sessionBinder.unbind(sessionId);
+
+      if (!removed) {
+        return reply.code(404).send({ error: "Binding not found" });
+      }
+
+      return { success: true };
+    } catch (error: any) {
+      req.log?.error(`[Pool API] Failed to remove binding: ${error.message}`);
+      return reply.code(500).send({ error: "Failed to remove binding" });
+    }
+  });
+
+  // GET /api/pool/alerts - 告警历史
+  app.get("/api/pool/alerts", async (req: any, reply: any) => {
+    try {
+      const alertService = getAlertService();
+      if (!alertService) {
+        return { alerts: [], stats: null };
+      }
+
+      const limit = parseInt((req.query as any).limit || "20");
+      const alerts = alertService.getRecentAlerts(limit);
+      const stats = alertService.getStats();
+
+      return { alerts, stats };
+    } catch (error: any) {
+      req.log?.error(`[Pool API] Failed to get alerts: ${error.message}`);
+      return reply.code(500).send({ error: "Failed to get alerts" });
+    }
+  });
+
+  // GET /api/pool/history/:accountId - 账号历史用量
+  app.get("/api/pool/history/:accountId", async (req: any, reply: any) => {
+    try {
+      const usageHistory = getUsageHistoryService();
+      if (!usageHistory) {
+        return { history: [], stats: null };
+      }
+
+      const { accountId } = req.params;
+      const limit = parseInt((req.query as any).limit || "24");
+      const history = usageHistory.getHistory(accountId, { limit });
+      const stats = usageHistory.getStats(accountId);
+
+      return { history, stats };
+    } catch (error: any) {
+      req.log?.error(`[Pool API] Failed to get history: ${error.message}`);
+      return reply.code(500).send({ error: "Failed to get history" });
+    }
+  });
 
   return server;
 };

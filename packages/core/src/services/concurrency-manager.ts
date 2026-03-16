@@ -308,4 +308,26 @@ export class ConcurrencyManager {
       );
     }
   }
+
+  /**
+   * Reset all concurrency slots (for admin use when slots leak)
+   * Clears all session tracking and resets all account concurrency counters to 0
+   */
+  resetAllSlots(): void {
+    // Reset all account concurrency counters
+    const accounts = this.poolManager.getAllAccounts();
+    for (const account of accounts) {
+      account.concurrency.current = 0;
+      account.concurrency.slots?.clear();
+      account.concurrency.lastUpdated = new Date();
+    }
+
+    // Clear all session tracking
+    const count = this.sessionSlots.size;
+    this.sessionSlots.clear();
+
+    console.log(
+      `[ConcurrencyManager] Reset all slots: cleared ${count} session(s)`
+    );
+  }
 }

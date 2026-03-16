@@ -291,6 +291,14 @@ export function initPoolRouter(configService: ConfigService): PoolRouter | null 
     // Initialize storage for persistence (load existing config if available)
     poolStorageInstance = createPoolStorage(poolManager);
 
+    // If no accounts loaded from pool-config.json, import from config.json accounts list
+    if (poolManager.getAllAccounts().length === 0 && codingPlanPoolConfig.accounts && Array.isArray(codingPlanPoolConfig.accounts) && codingPlanPoolConfig.accounts.length > 0) {
+      console.log(`[PoolRouter] No persisted accounts found. Importing ${codingPlanPoolConfig.accounts.length} accounts from config.json...`);
+      poolManager.importConfig({ accounts: codingPlanPoolConfig.accounts });
+      // Save immediately so pool-config.json is created
+      poolStorageInstance.markDirty();
+    }
+
     poolRouterInstance = new PoolRouter(poolManager, concurrencyManager, codingPlanPoolConfig, undefined);
     poolRouterInitialized = true;
 

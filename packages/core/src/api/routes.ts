@@ -75,6 +75,13 @@ async function handleTransformerEndpoint(
     }
   }
 
+  // 拦截并修复 Claude Code 发出的硬编码别名
+  const modelMapping = fastify.configService.get<Record<string, string>>("modelMapping") || {};
+  if (body.model && modelMapping[body.model]) {
+    req.log.info(`[ModelMapping] Mapped model from ${body.model} to ${modelMapping[body.model]}`);
+    body.model = modelMapping[body.model];
+  }
+
   try {
     // Process request transformer chain
     const { requestBody, config, bypass } = await processRequestTransformers(
@@ -733,8 +740,12 @@ export const registerApiRoutes = async (
     const sessionBinder = poolRouter.getSessionBinder();
     sessionBinder.clearAllBindings();
 
+    // Also reset concurrency counters to fix any leaked slots
+    const concurrencyManager = poolRouter.getConcurrencyManager();
+    concurrencyManager.resetAllSlots();
+
     return {
-      message: "All bindings cleared",
+      message: "All bindings and concurrency slots cleared",
     };
   });
 
