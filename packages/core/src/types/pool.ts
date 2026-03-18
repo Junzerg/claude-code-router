@@ -89,6 +89,10 @@ export interface CodingPlanAccount {
   apiKey: string;
   /** API base URL */
   apiBaseUrl: string;
+  /** Optional: reference a registered provider name to inherit headers/transformer */
+  provider?: string;
+  /** Optional: custom headers (overrides inherited headers from referenced provider) */
+  headers?: Record<string, string>;
   /** Account status */
   status: AccountStatus;
   /** Concurrency state */

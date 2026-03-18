@@ -452,6 +452,8 @@ export class PoolManager {
         apiBaseUrl: account.apiBaseUrl,
         // Note: apiKey is included but should be encrypted in production
         apiKey: account.apiKey,
+        provider: account.provider,
+        headers: account.headers,
         config: account.config,
         metadata: account.metadata,
       })),
@@ -485,6 +487,8 @@ export class PoolManager {
           platform: acc.platform || 'zai',
           apiKey: acc.apiKey,
           apiBaseUrl: acc.apiBaseUrl || 'https://api.z.ai/api/anthropic',
+          provider: acc.provider,
+          headers: acc.headers,
           status: acc.status || 'active',
           concurrency: {
             current: acc.concurrency?.current || 0,

@@ -48,20 +48,32 @@ async function handleTransformerEndpoint(
     poolAccount = (req as any).poolAccount;
     req.log.info(`[PoolRouter] Using pool account: ${poolAccount.id}`);
 
-    // Create a temporary provider with pool account credentials
-    // This bypasses the need for a registered 'codingplan' provider
-    // Note: apiBaseUrl should be the full endpoint URL (e.g., https://open.bigmodel.cn/api/coding/paas/v4/chat/completions)
+    // Look up referenced provider for inheriting headers/transformer
+    let referencedProvider: LLMProvider | undefined;
+    if (poolAccount.provider) {
+      referencedProvider = fastify.providerService.getProvider(poolAccount.provider);
+      if (referencedProvider) {
+        req.log.info(`[PoolRouter] Inheriting config from provider: ${poolAccount.provider}`);
+      } else {
+        req.log.warn(`[PoolRouter] Referenced provider '${poolAccount.provider}' not found, skipping inheritance`);
+      }
+    }
+
+    // Calculate base URL
+    // apiBaseUrl should be the full endpoint URL (e.g., https://open.bigmodel.cn/api/coding/paas/v4/chat/completions)
     // If apiBaseUrl doesn't end with /chat/completions, append it
     let baseUrl = poolAccount.apiBaseUrl;
     if (baseUrl && !baseUrl.endsWith('/chat/completions')) {
       baseUrl = baseUrl.replace(/\/$/, '') + '/chat/completions';
     }
+
     provider = {
       name: `codingplan-${poolAccount.id}`,
       apiKey: poolAccount.apiKey,
       baseUrl: baseUrl,
       models: [],
-      transformer: { use: [] },
+      transformer: referencedProvider?.transformer ?? undefined,
+      headers: { ...(referencedProvider?.headers || {}), ...(poolAccount.headers || {}) },
       _platform: poolAccount.platform,  // 保存平台类型用于认证头处理
     };
   } else {
@@ -390,6 +402,7 @@ async function sendRequestToProvider(
   const isZaiOrZhipu = provider._platform && ['zai', 'zhipu'].includes(provider._platform as string);
   const requestHeaders: Record<string, string> = {
     Authorization: isZaiOrZhipu ? provider.apiKey : `Bearer ${provider.apiKey}`,
+    ...(provider.headers || {}),
     ...(config?.headers || {}),
   };
 

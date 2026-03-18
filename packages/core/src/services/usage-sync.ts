@@ -186,6 +186,14 @@ export class UsageSyncService {
 
     this.log(`Syncing account ${accountId} (${account.name})...`);
 
+    // Kimi Code (api.kimi.com) has no quota/balance API — skip sync
+    const isKimi = account.apiBaseUrl?.includes('api.kimi.com') ||
+                   (account as any).platform === 'kimi';
+    if (isKimi) {
+      this.log(`Skipping sync for Kimi account ${accountId} (no quota API available)`);
+      return;
+    }
+
     // Get or create client
     let client = this.clients.get(accountId);
     if (!client) {
