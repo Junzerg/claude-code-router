@@ -18,18 +18,19 @@ export interface RequestWithSession {
  * Extract session ID from request
  *
  * Priority order:
- * 1. sessionId property (directly passed from router)
+ * 1. x-session-id header (custom, highest priority for user-supplied session IDs)
  * 2. conversation_id (Anthropic/Claude Code native)
- * 3. x-session-id header (custom)
+ * 3. sessionId property (directly passed from router, lowest priority)
  * 4. Generate fallback ID from auth token or IP
  *
  * @param request - Request data
  * @returns Session ID string
  */
 export function extractSessionId(request: RequestWithSession): string {
-  // Priority 0: Use directly passed sessionId (from router.ts)
-  if (request.sessionId) {
-    return request.sessionId;
+  // Priority 0: Extract from x-session-id header (highest priority for user-supplied session IDs)
+  const sessionId = request.headers?.['x-session-id'];
+  if (sessionId) {
+    return `session_${sessionId}`;
   }
 
   // Priority 1: Extract conversation_id (Claude Code native)
@@ -38,10 +39,9 @@ export function extractSessionId(request: RequestWithSession): string {
     return `conv_${conversationId}`;
   }
 
-  // Priority 2: Extract from x-session-id header
-  const sessionId = request.headers?.['x-session-id'];
-  if (sessionId) {
-    return `session_${sessionId}`;
+  // Priority 2: Use directly passed sessionId (from router.ts, lowest priority)
+  if (request.sessionId) {
+    return request.sessionId;
   }
 
   // Priority 3: Generate fallback ID from auth token or IP

@@ -145,8 +145,12 @@ const getUseModel = async (
       req.sessionId = req.sessionId || `default-${Date.now()}`;
       const selection = await poolRouter.selectAccount({
         sessionId: req.sessionId,
+        headers: req.headers,
         body: req.body,
       });
+
+      // Update req.sessionId with the extracted sessionId (from headers if present)
+      req.sessionId = selection.sessionId;
 
       // Get the account details
       const account = poolRouter.getPoolManager().getAccount(selection.accountId);

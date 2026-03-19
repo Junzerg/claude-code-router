@@ -1,4 +1,5 @@
 import { SessionBinding } from '../types/pool';
+import * as crypto from 'crypto';
 
 /**
  * Session Binder Options
@@ -79,24 +80,39 @@ export class SessionBinder {
   }
 
   /**
+   * Hash a session ID to a consistent value using SHA256
+   * This ensures consistent mapping: Hash(SessionID) -> Account
+   * @param sessionId - Original session ID
+   * @returns Hashed session ID
+   */
+  private hashSessionId(sessionId: string): string {
+    return crypto
+      .createHash('sha256')
+      .update(sessionId)
+      .digest('hex');
+  }
+
+  /**
    * Get the account ID bound to a session
    * @param sessionId - Session ID
    * @returns Account ID or undefined if not bound or expired
    */
   getBoundAccount(sessionId: string): string | undefined {
-    const binding = this.bindings.get(sessionId);
+    // Hash the session ID for consistent mapping
+    const hashedId = this.hashSessionId(sessionId);
+    const binding = this.bindings.get(hashedId);
     if (!binding) {
       return undefined;
     }
 
     // Check if binding is still valid (not expired)
-    if (!this.isValid(sessionId)) {
+    if (!this.isValid(hashedId)) {
       this.unbind(sessionId);
       return undefined;
     }
 
     // Update last active time (touch)
-    this.touch(sessionId);
+    this.touch(hashedId);
     return binding.accountId;
   }
 
@@ -108,21 +124,23 @@ export class SessionBinder {
    */
   bind(sessionId: string, accountId: string): SessionBinding {
     const now = new Date();
+    // Hash the session ID for consistent mapping
+    const hashedId = this.hashSessionId(sessionId);
 
     // Update existing binding
-    if (this.bindings.has(sessionId)) {
-      const binding = this.bindings.get(sessionId)!;
+    if (this.bindings.has(hashedId)) {
+      const binding = this.bindings.get(hashedId)!;
       binding.accountId = accountId;
       binding.lastActiveAt = now;
       binding.updatedAt = now;
       console.log(`[SessionBinder] Updated binding: ${sessionId} -> ${accountId}`);
-      this.callbacks?.onBind?.(sessionId, accountId);
+      this.callbacks?.onBind?.(hashedId, accountId);
       return binding;
     }
 
     // Create new binding
     const binding: SessionBinding = {
-      sessionId,
+      sessionId: hashedId,
       accountId,
       createdAt: now,
       lastActiveAt: now,
@@ -130,9 +148,9 @@ export class SessionBinder {
       ttlMinutes: Math.floor(this.ttlMs / 60000),
     };
 
-    this.bindings.set(sessionId, binding);
+    this.bindings.set(hashedId, binding);
     console.log(`[SessionBinder] Created binding: ${sessionId} -> ${accountId}`);
-    this.callbacks?.onBind?.(sessionId, accountId);
+    this.callbacks?.onBind?.(hashedId, accountId);
     return binding;
   }
 
@@ -142,11 +160,13 @@ export class SessionBinder {
    * @returns True if binding was removed, false if not found
    */
   unbind(sessionId: string): boolean {
-    const binding = this.bindings.get(sessionId);
+    // Hash the session ID for consistent mapping
+    const hashedId = this.hashSessionId(sessionId);
+    const binding = this.bindings.get(hashedId);
     if (binding) {
-      this.bindings.delete(sessionId);
+      this.bindings.delete(hashedId);
       console.log(`[SessionBinder] Removed binding: ${sessionId}`);
-      this.callbacks?.onUnbind?.(sessionId, binding.accountId);
+      this.callbacks?.onUnbind?.(hashedId, binding.accountId);
       return true;
     }
     return false;
@@ -157,7 +177,9 @@ export class SessionBinder {
    * @param sessionId - Session ID
    */
   touch(sessionId: string): void {
-    const binding = this.bindings.get(sessionId);
+    // Hash the session ID for consistent mapping
+    const hashedId = this.hashSessionId(sessionId);
+    const binding = this.bindings.get(hashedId);
     if (binding) {
       binding.lastActiveAt = new Date();
     }
@@ -169,7 +191,9 @@ export class SessionBinder {
    * @returns True if binding exists and is not expired
    */
   isValid(sessionId: string): boolean {
-    const binding = this.bindings.get(sessionId);
+    // Hash the session ID for consistent mapping
+    const hashedId = this.hashSessionId(sessionId);
+    const binding = this.bindings.get(hashedId);
     if (!binding) {
       return false;
     }
@@ -236,7 +260,9 @@ export class SessionBinder {
    * @returns Binding info or undefined
    */
   getBinding(sessionId: string): SessionBinding | undefined {
-    return this.bindings.get(sessionId);
+    // Hash the session ID for consistent mapping
+    const hashedId = this.hashSessionId(sessionId);
+    return this.bindings.get(hashedId);
   }
 
   /**
