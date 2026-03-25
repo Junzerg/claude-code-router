@@ -155,15 +155,33 @@ export class ConcurrencyManager {
    */
   async releaseAllSlots(sessionId: string): Promise<void> {
     const slotInfo = this.sessionSlots.get(sessionId);
-    if (slotInfo) {
-      // Force release by setting activeRequests to 1, then releasing
-      slotInfo.activeRequests = 1;
-      this.sessionSlots.set(sessionId, slotInfo);
-      await this.releaseSlot(slotInfo.accountId, sessionId);
+    if (!slotInfo) {
+      return;
+    }
+
+    const account = this.poolManager.getAccount(slotInfo.accountId);
+    if (!account) {
+      console.warn(`[ConcurrencyManager] Account not found: ${slotInfo.accountId}`);
+      this.sessionSlots.delete(sessionId);
+      return;
+    }
+
+    // Force release: clear the slot from account regardless of active request count
+    if (account.concurrency.slots?.has(sessionId)) {
+      account.concurrency.slots.delete(sessionId);
+      account.concurrency.current = Math.max(
+        0,
+        account.concurrency.current - 1
+      );
+      account.concurrency.lastUpdated = new Date();
+
       console.log(
-        `[ConcurrencyManager] All slots released for session: ${sessionId}`
+        `[ConcurrencyManager] All slots released: ${sessionId} <- ${slotInfo.accountId} (was ${slotInfo.activeRequests} active requests, now ${account.concurrency.current}/${account.concurrency.max})`
       );
     }
+
+    // Remove session tracking
+    this.sessionSlots.delete(sessionId);
   }
 
   /**
@@ -217,8 +235,8 @@ export class ConcurrencyManager {
       `[ConcurrencyManager] Starting heartbeat check (interval: ${intervalMs}ms)`
     );
 
-    this.heartbeatCheckInterval = setInterval(() => {
-      this.cleanupStaleSlots();
+    this.heartbeatCheckInterval = setInterval(async () => {
+      await this.cleanupStaleSlots();
     }, intervalMs);
   }
 
@@ -236,20 +254,30 @@ export class ConcurrencyManager {
   /**
    * Clean up stale/zombie slots (sessions that haven't sent heartbeat)
    */
-  private cleanupStaleSlots(): void {
+  private async cleanupStaleSlots(): Promise<void> {
     const now = Date.now();
     let cleanedCount = 0;
 
+    const staleSessions: string[] = [];
+
+    // First, identify all stale sessions
     for (const [sessionId, slotInfo] of this.sessionSlots.entries()) {
       const lastHeartbeat = slotInfo.lastHeartbeat.getTime();
       const age = now - lastHeartbeat;
 
       if (age > this.STALE_THRESHOLD_MS) {
+        staleSessions.push(sessionId);
+      }
+    }
+
+    // Then clean them up one by one to avoid race conditions
+    for (const sessionId of staleSessions) {
+      const slotInfo = this.sessionSlots.get(sessionId);
+      if (slotInfo) {
         console.warn(
-          `[ConcurrencyManager] Cleaning up stale slot: ${sessionId} (age: ${Math.round(age / 1000)}s, active requests: ${slotInfo.activeRequests})`
+          `[ConcurrencyManager] Cleaning up stale slot: ${sessionId} (age: ${Math.round((now - slotInfo.lastHeartbeat.getTime()) / 1000)}s, active requests: ${slotInfo.activeRequests})`
         );
-        // Use releaseAllSlots to ensure proper cleanup with reference count
-        this.releaseAllSlots(sessionId);
+        await this.releaseAllSlots(sessionId);
         cleanedCount++;
       }
     }
