@@ -11,6 +11,8 @@ interface SessionSlotInfo {
   acquiredAt: Date;
   /** Last heartbeat timestamp */
   lastHeartbeat: Date;
+  /** Number of active requests for this session (reference count) */
+  activeRequests: number;
 }
 
 /**
@@ -54,13 +56,17 @@ export class ConcurrencyManager {
     // Check if already occupied by this session (do this before max concurrency check)
     if (account.concurrency.slots?.has(sessionId)) {
       console.debug(
-        `[ConcurrencyManager] Session ${sessionId} already has slot on account ${accountId}`
+        `[ConcurrencyManager] Session ${sessionId} already has slot on account ${accountId}, incrementing reference count`
       );
-      // Update heartbeat
+      // Update heartbeat and increment reference count
       const slotInfo = this.sessionSlots.get(sessionId);
       if (slotInfo) {
         slotInfo.lastHeartbeat = new Date();
+        slotInfo.activeRequests++;
         this.sessionSlots.set(sessionId, slotInfo);
+        console.log(
+          `[ConcurrencyManager] Session ${sessionId} now has ${slotInfo.activeRequests} active requests`
+        );
       }
       return true;
     }
@@ -81,11 +87,12 @@ export class ConcurrencyManager {
     account.concurrency.slots.add(sessionId);
     account.concurrency.lastUpdated = new Date();
 
-    // Track session slot
+    // Track session slot with reference count
     this.sessionSlots.set(sessionId, {
       accountId,
       acquiredAt: new Date(),
       lastHeartbeat: new Date(),
+      activeRequests: 1, // Initialize with 1 for first request
     });
 
     console.log(
@@ -106,21 +113,40 @@ export class ConcurrencyManager {
       return;
     }
 
-    if (account.concurrency.slots?.has(sessionId)) {
-      account.concurrency.slots.delete(sessionId);
-      account.concurrency.current = Math.max(
-        0,
-        account.concurrency.current - 1
-      );
-      account.concurrency.lastUpdated = new Date();
-
-      console.log(
-        `[ConcurrencyManager] Slot released: ${sessionId} <- ${accountId} (${account.concurrency.current}/${account.concurrency.max})`
-      );
+    // Get slot info to decrement reference count
+    const slotInfo = this.sessionSlots.get(sessionId);
+    if (!slotInfo) {
+      console.warn(`[ConcurrencyManager] Session slot not found: ${sessionId}`);
+      return;
     }
 
-    // Remove session tracking
-    this.sessionSlots.delete(sessionId);
+    // Decrement reference count
+    slotInfo.activeRequests--;
+    console.log(
+      `[ConcurrencyManager] Request completed for ${sessionId}, active requests remaining: ${slotInfo.activeRequests}`
+    );
+
+    // Only release account slot when all requests for this session are done
+    if (slotInfo.activeRequests <= 0) {
+      if (account.concurrency.slots?.has(sessionId)) {
+        account.concurrency.slots.delete(sessionId);
+        account.concurrency.current = Math.max(
+          0,
+          account.concurrency.current - 1
+        );
+        account.concurrency.lastUpdated = new Date();
+
+        console.log(
+          `[ConcurrencyManager] Slot released: ${sessionId} <- ${accountId} (${account.concurrency.current}/${account.concurrency.max})`
+        );
+      }
+
+      // Remove session tracking
+      this.sessionSlots.delete(sessionId);
+    } else {
+      // Update the slot info with decremented count
+      this.sessionSlots.set(sessionId, slotInfo);
+    }
   }
 
   /**
@@ -130,6 +156,9 @@ export class ConcurrencyManager {
   async releaseAllSlots(sessionId: string): Promise<void> {
     const slotInfo = this.sessionSlots.get(sessionId);
     if (slotInfo) {
+      // Force release by setting activeRequests to 1, then releasing
+      slotInfo.activeRequests = 1;
+      this.sessionSlots.set(sessionId, slotInfo);
       await this.releaseSlot(slotInfo.accountId, sessionId);
       console.log(
         `[ConcurrencyManager] All slots released for session: ${sessionId}`
@@ -217,9 +246,10 @@ export class ConcurrencyManager {
 
       if (age > this.STALE_THRESHOLD_MS) {
         console.warn(
-          `[ConcurrencyManager] Cleaning up stale slot: ${sessionId} (age: ${Math.round(age / 1000)}s)`
+          `[ConcurrencyManager] Cleaning up stale slot: ${sessionId} (age: ${Math.round(age / 1000)}s, active requests: ${slotInfo.activeRequests})`
         );
-        this.releaseSlot(slotInfo.accountId, sessionId);
+        // Use releaseAllSlots to ensure proper cleanup with reference count
+        this.releaseAllSlots(sessionId);
         cleanedCount++;
       }
     }
