@@ -13,6 +13,7 @@ import { ProviderService } from "@/services/provider";
 import { TransformerService } from "@/services/transformer";
 import { Transformer } from "@/types/transformer";
 import { getPoolRouter, getUsageHistoryService, getSmartRouter } from "@/utils/router";
+import { getRetryManager } from "@/services/retry-manager";
 
 // Extend FastifyInstance to include custom services
 declare module "fastify" {
@@ -126,33 +127,83 @@ async function handleTransformerEndpoint(
       }
     );
 
-    // Send request to LLM provider
-    const response = await sendRequestToProvider(
-      requestBody,
-      config,
-      provider,
-      fastify,
-      bypass,
-      transformer,
-      {
-        req,
-      }
-    );
+    // Use retry manager for automatic account switching on 429
+    const retryManager = getRetryManager();
 
-    // Process response transformer chain
-    const finalResponse = await processResponseTransformers(
-      requestBody,
-      response,
-      provider,
-      transformer,
-      bypass,
-      {
-        req,
+    // Define the request function to be retried
+    const requestFn = async (currentPoolAccount?: any) => {
+      // If we're retrying with a different account, update the provider
+      let requestProvider = provider;
+      if (currentPoolAccount && currentPoolAccount.id !== poolAccount?.id) {
+        // Create new provider for the retry account
+        let referencedProvider: LLMProvider | undefined;
+        if (currentPoolAccount.provider) {
+          referencedProvider = fastify.providerService.getProvider(currentPoolAccount.provider);
+        }
+
+        let baseUrl = currentPoolAccount.apiBaseUrl;
+        if (baseUrl && !baseUrl.endsWith('/chat/completions')) {
+          baseUrl = baseUrl.replace(/\/$/, '') + '/chat/completions';
+        }
+
+        requestProvider = {
+          name: `codingplan-${currentPoolAccount.id}`,
+          apiKey: currentPoolAccount.apiKey,
+          baseUrl: baseUrl,
+          models: [],
+          transformer: referencedProvider?.transformer ?? undefined,
+          headers: { ...(referencedProvider?.headers || {}), ...(currentPoolAccount.headers || {}) },
+          _platform: currentPoolAccount.platform,
+        };
+
+        // Update poolAccount reference in request for transformer access
+        (req as any).poolAccount = currentPoolAccount;
       }
-    );
+
+      // Send request to LLM provider
+      const response = await sendRequestToProvider(
+        requestBody,
+        config,
+        requestProvider,
+        fastify,
+        bypass,
+        transformer,
+        {
+          req,
+        }
+      );
+
+      // Process response transformer chain
+      const finalResponse = await processResponseTransformers(
+        requestBody,
+        response,
+        requestProvider,
+        transformer,
+        bypass,
+        {
+          req,
+        }
+      );
+
+      return finalResponse;
+    };
+
+    // Execute request with automatic retry and account switching
+    const retryResult = await retryManager.executeWithRetry(req, requestFn);
+
+    if (!retryResult.success) {
+      // All retries failed, try fallback
+      if (retryResult.error?.code === 'provider_response_error') {
+        const fallbackResult = await handleFallback(req, reply, fastify, transformer, retryResult.error);
+        if (fallbackResult) {
+          return fallbackResult;
+        }
+      }
+      throw retryResult.error;
+    }
 
     // Format and return response
-    return formatResponse(finalResponse, reply, body);
+    return formatResponse(retryResult.data!, reply, body);
   } catch (error: any) {
     // Handle fallback if error occurs
     if (error.code === 'provider_response_error') {

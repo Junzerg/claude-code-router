@@ -72,6 +72,11 @@ export class PoolManager {
         enabled: config?.usageSync?.enabled ?? true,
         intervalMinutes: config?.usageSync?.intervalMinutes ?? 5,
       },
+      rateLimitRecovery: {
+        enabled: config?.rateLimitRecovery?.enabled ?? true,
+        checkIntervalMinutes: config?.rateLimitRecovery?.checkIntervalMinutes ?? 60,
+        defaultRecoveryMinutes: config?.rateLimitRecovery?.defaultRecoveryMinutes ?? 60,
+      },
     };
 
     // Initialize usage tracker

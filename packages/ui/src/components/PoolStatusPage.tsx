@@ -329,7 +329,7 @@ export function PoolStatusPage() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <span>{formatPercent(account.usage.usagePercent)}</span>
-                          <div className="w-20 bg-gray-200 rounded-full h-2">
+                          <div className="w-24 bg-gray-200 rounded-full h-2">
                             <div
                               className={`h-2 rounded-full ${getUsageColor(account.usage.usagePercent)}`}
                               style={{ width: `${Math.min(account.usage.usagePercent, 100)}%` }}
@@ -340,7 +340,7 @@ export function PoolStatusPage() {
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <span>{formatPercent(account.usage.weeklyLimit > 0 ? (account.usage.weekly / account.usage.weeklyLimit) * 100 : 0)}</span>
-                          <div className="w-20 bg-gray-200 rounded-full h-2">
+                          <div className="w-24 bg-gray-200 rounded-full h-2">
                             <div
                               className={`h-2 rounded-full ${getUsageColor(account.usage.weeklyLimit > 0 ? (account.usage.weekly / account.usage.weeklyLimit) * 100 : 0)}`}
                               style={{ width: `${Math.min(account.usage.weeklyLimit > 0 ? (account.usage.weekly / account.usage.weeklyLimit) * 100 : 0, 100)}%` }}

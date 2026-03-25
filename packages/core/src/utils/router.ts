@@ -17,6 +17,7 @@ import { AlertService, createAlertService } from "../services/alerts";
 import { UsageHistoryService, createUsageHistoryService } from "../services/usage-history";
 import { SmartRouter, createSmartRouter } from "../services/smart-router";
 import { UsageSyncService } from "../services/usage-sync";
+import { RateLimitRecoveryService } from "../services/rate-limit-recovery";
 
 // Types from @anthropic-ai/sdk
 interface Tool {
@@ -268,6 +269,7 @@ let alertServiceInstance: AlertService | null = null;
 let usageHistoryServiceInstance: UsageHistoryService | null = null;
 let smartRouterInstance: SmartRouter | null = null;
 let usageSyncServiceInstance: UsageSyncService | null = null;
+let rateLimitRecoveryServiceInstance: RateLimitRecoveryService | null = null;
 
 /**
  * Initialize the pool router
@@ -377,6 +379,22 @@ export function initPoolRouter(configService: ConfigService): PoolRouter | null 
       console.log('[PoolRouter] UsageSyncService disabled (usageSync.enabled not set in config)');
     }
 
+    // Initialize and start RateLimitRecoveryService if enabled
+    const rateLimitRecoveryConfig = codingPlanPoolConfig.rateLimitRecovery;
+    if (rateLimitRecoveryConfig?.enabled !== false) {
+      rateLimitRecoveryServiceInstance = new RateLimitRecoveryService(
+        poolManager,
+        {
+          checkIntervalMinutes: rateLimitRecoveryConfig?.checkIntervalMinutes,
+          defaultRecoveryMinutes: rateLimitRecoveryConfig?.defaultRecoveryMinutes,
+        }
+      );
+      rateLimitRecoveryServiceInstance.start();
+      console.log(`[PoolRouter] RateLimitRecoveryService started`);
+    } else {
+      console.log('[PoolRouter] RateLimitRecoveryService disabled');
+    }
+
     // Start heartbeat check to automatically clean up zombie/orphaned concurrency slots
     concurrencyManager.startHeartbeatCheck(60000);
 
@@ -436,6 +454,13 @@ export function getSmartRouter(): SmartRouter | null {
  */
 export function getUsageSyncService(): UsageSyncService | null {
   return usageSyncServiceInstance;
+}
+
+/**
+ * Get the rate limit recovery service instance
+ */
+export function getRateLimitRecoveryService(): RateLimitRecoveryService | null {
+  return rateLimitRecoveryServiceInstance;
 }
 
 export const router = async (req: any, _res: any, context: RouterContext) => {

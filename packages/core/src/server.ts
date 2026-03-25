@@ -31,8 +31,9 @@ import { registerApiRoutes } from "./api/routes";
 import { ProviderService } from "./services/provider";
 import { TransformerService } from "./services/transformer";
 import { TokenizerService } from "./services/tokenizer";
-import { router, calculateTokenCount, searchProjectBySession, initPoolRouter, getPoolRouter } from "./utils/router";
+import { router, calculateTokenCount, searchProjectBySession, initPoolRouter, getPoolRouter, getRateLimitRecoveryService } from "./utils/router";
 import { sessionUsageCache } from "./utils/cache";
+import { rateLimitHook } from "./api/rate-limit-middleware";
 
 // Extend FastifyRequest to include custom properties
 declare module "fastify" {
@@ -145,7 +146,7 @@ class Server {
         // Add router hook for main namespace
         fastify.addHook('preHandler', async (req: any, reply: any) => {
           const url = new URL(`http://127.0.0.1${req.url}`);
-          if (url.pathname.endsWith("/v1/messages")) {
+          if (url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/chat/completions")) {
             await router(req, reply, {
               configService: this.configService,
               tokenizerService: this.tokenizerService,
@@ -186,7 +187,7 @@ class Server {
       // Add router hook for namespace
       fastify.addHook('preHandler', async (req: any, reply: any) => {
         const url = new URL(`http://127.0.0.1${req.url}`);
-        if (url.pathname.endsWith("/v1/messages")) {
+        if (url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/chat/completions")) {
           await router(req, reply, {
             configService,
             tokenizerService,
@@ -203,7 +204,7 @@ class Server {
 
       this.app.addHook("preHandler", (req, reply, done) => {
         const url = new URL(`http://127.0.0.1${req.url}`);
-        if (url.pathname.endsWith("/v1/messages") && req.body) {
+        if ((url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/chat/completions")) && req.body) {
           const body = req.body as any;
           req.log.info({ data: body, type: "request body" });
           if (!body.stream) {
@@ -219,7 +220,7 @@ class Server {
         "preHandler",
         async (req: FastifyRequest, reply: FastifyReply) => {
           const url = new URL(`http://127.0.0.1${req.url}`);
-          if (url.pathname.endsWith("/v1/messages") && req.body) {
+          if ((url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/chat/completions")) && req.body) {
             try {
               const body = req.body as any;
               if (!body || !body.model) {
@@ -247,7 +248,7 @@ class Server {
         "onRequest",
         async (req: FastifyRequest, reply: FastifyReply) => {
           const url = new URL(`http://127.0.0.1${req.url}`);
-          if (url.pathname.endsWith("/v1/messages")) {
+          if (url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/chat/completions")) {
             // Listen for raw socket close — fires on both normal end and client disconnect
             req.raw.on("close", () => {
               const sessionId = (req as any).sessionId;
@@ -266,12 +267,24 @@ class Server {
         }
       );
 
+      // Add onSend hook to intercept responses and handle rate limit errors
+      this.app.addHook(
+        "onSend",
+        async (req: FastifyRequest, reply: FastifyReply, payload: any) => {
+          // Only check if rate limit recovery service is available
+          if (getRateLimitRecoveryService()) {
+            await rateLimitHook(req, reply, payload);
+          }
+          return payload;
+        }
+      );
+
       // Keep onResponse as safety net (fires for non-streaming or fully completed responses)
       this.app.addHook(
         "onResponse",
         async (req: FastifyRequest, reply: FastifyReply) => {
           const url = new URL(`http://127.0.0.1${req.url}`);
-          if (url.pathname.endsWith("/v1/messages")) {
+          if (url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/chat/completions")) {
             const sessionId = (req as any).sessionId;
             const poolRouter = getPoolRouter();
             if (sessionId && poolRouter && !(req as any)._poolSlotReleased) {

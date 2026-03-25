@@ -160,6 +160,15 @@ export interface AccountPoolConfig {
     /** Sync interval in minutes */
     intervalMinutes: number;
   };
+  /** Rate limit recovery settings */
+  rateLimitRecovery: {
+    /** Whether automatic recovery is enabled */
+    enabled: boolean;
+    /** Recovery interval in minutes (default: 60) */
+    checkIntervalMinutes: number;
+    /** Default recovery duration in minutes (default: 60) */
+    defaultRecoveryMinutes: number;
+  };
 }
 
 /**
