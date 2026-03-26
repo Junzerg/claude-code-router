@@ -11,7 +11,7 @@ interface SessionSlotInfo {
   acquiredAt: Date;
   /** Last heartbeat timestamp */
   lastHeartbeat: Date;
-  /** Number of active requests for this session (reference count) */
+  /** Number of active concurrent requests sharing this slot */
   activeRequests: number;
 }
 
@@ -54,20 +54,16 @@ export class ConcurrencyManager {
     }
 
     // Check if already occupied by this session (do this before max concurrency check)
-    if (account.concurrency.slots?.has(sessionId)) {
+    const slotKey = `${sessionId}:${accountId}`;
+    const slotInfo = this.sessionSlots.get(slotKey);
+    if (slotInfo && account.concurrency.slots?.has(sessionId)) {
       console.debug(
-        `[ConcurrencyManager] Session ${sessionId} already has slot on account ${accountId}, incrementing reference count`
+        `[ConcurrencyManager] Session ${sessionId} already has slot on account ${accountId}, incrementing active requests`
       );
       // Update heartbeat and increment reference count
-      const slotInfo = this.sessionSlots.get(sessionId);
-      if (slotInfo) {
-        slotInfo.lastHeartbeat = new Date();
-        slotInfo.activeRequests++;
-        this.sessionSlots.set(sessionId, slotInfo);
-        console.log(
-          `[ConcurrencyManager] Session ${sessionId} now has ${slotInfo.activeRequests} active requests`
-        );
-      }
+      slotInfo.lastHeartbeat = new Date();
+      slotInfo.activeRequests += 1;
+      this.sessionSlots.set(slotKey, slotInfo);
       return true;
     }
 
@@ -87,12 +83,12 @@ export class ConcurrencyManager {
     account.concurrency.slots.add(sessionId);
     account.concurrency.lastUpdated = new Date();
 
-    // Track session slot with reference count
-    this.sessionSlots.set(sessionId, {
+    // Track session slot
+    this.sessionSlots.set(slotKey, {
       accountId,
       acquiredAt: new Date(),
       lastHeartbeat: new Date(),
-      activeRequests: 1, // Initialize with 1 for first request
+      activeRequests: 1,
     });
 
     console.log(
@@ -113,60 +109,19 @@ export class ConcurrencyManager {
       return;
     }
 
-    // Get slot info to decrement reference count
-    const slotInfo = this.sessionSlots.get(sessionId);
-    if (!slotInfo) {
-      console.warn(`[ConcurrencyManager] Session slot not found: ${sessionId}`);
-      return;
-    }
-
-    // Decrement reference count
-    slotInfo.activeRequests--;
-    console.log(
-      `[ConcurrencyManager] Request completed for ${sessionId}, active requests remaining: ${slotInfo.activeRequests}`
-    );
-
-    // Only release account slot when all requests for this session are done
-    if (slotInfo.activeRequests <= 0) {
-      if (account.concurrency.slots?.has(sessionId)) {
-        account.concurrency.slots.delete(sessionId);
-        account.concurrency.current = Math.max(
-          0,
-          account.concurrency.current - 1
+    const slotKey = `${sessionId}:${accountId}`;
+    const slotInfo = this.sessionSlots.get(slotKey);
+    if (slotInfo) {
+      slotInfo.activeRequests = Math.max(0, slotInfo.activeRequests - 1);
+      if (slotInfo.activeRequests > 0) {
+        console.debug(
+          `[ConcurrencyManager] Session ${sessionId} released a request but still has ${slotInfo.activeRequests} active request(s)`
         );
-        account.concurrency.lastUpdated = new Date();
-
-        console.log(
-          `[ConcurrencyManager] Slot released: ${sessionId} <- ${accountId} (${account.concurrency.current}/${account.concurrency.max})`
-        );
+        this.sessionSlots.set(slotKey, slotInfo);
+        return;
       }
-
-      // Remove session tracking
-      this.sessionSlots.delete(sessionId);
-    } else {
-      // Update the slot info with decremented count
-      this.sessionSlots.set(sessionId, slotInfo);
-    }
-  }
-
-  /**
-   * Release all slots for a session (called when user disconnects)
-   * @param sessionId - Session ID to release all slots for
-   */
-  async releaseAllSlots(sessionId: string): Promise<void> {
-    const slotInfo = this.sessionSlots.get(sessionId);
-    if (!slotInfo) {
-      return;
     }
 
-    const account = this.poolManager.getAccount(slotInfo.accountId);
-    if (!account) {
-      console.warn(`[ConcurrencyManager] Account not found: ${slotInfo.accountId}`);
-      this.sessionSlots.delete(sessionId);
-      return;
-    }
-
-    // Force release: clear the slot from account regardless of active request count
     if (account.concurrency.slots?.has(sessionId)) {
       account.concurrency.slots.delete(sessionId);
       account.concurrency.current = Math.max(
@@ -176,12 +131,32 @@ export class ConcurrencyManager {
       account.concurrency.lastUpdated = new Date();
 
       console.log(
-        `[ConcurrencyManager] All slots released: ${sessionId} <- ${slotInfo.accountId} (was ${slotInfo.activeRequests} active requests, now ${account.concurrency.current}/${account.concurrency.max})`
+        `[ConcurrencyManager] Slot completely released: ${sessionId} <- ${accountId} (${account.concurrency.current}/${account.concurrency.max})`
       );
     }
 
     // Remove session tracking
-    this.sessionSlots.delete(sessionId);
+    this.sessionSlots.delete(slotKey);
+  }
+
+  /**
+   * Release all slots for a session (called when user disconnects)
+   * @param sessionId - Session ID to release all slots for
+   */
+  async releaseAllSlots(sessionId: string): Promise<void> {
+    // Iterate over all entries to find slots matching this sessionId
+    for (const [slotKey, slotInfo] of Array.from(this.sessionSlots.entries())) {
+      if (slotKey.startsWith(`${sessionId}:`)) {
+        // Force activeRequests to 1 so the next releaseSlot completely frees it
+        slotInfo.activeRequests = 1;
+        this.sessionSlots.set(slotKey, slotInfo);
+        
+        await this.releaseSlot(slotInfo.accountId, sessionId);
+        console.log(
+          `[ConcurrencyManager] All slots forcedly released for session: ${sessionId} on account ${slotInfo.accountId}`
+        );
+      }
+    }
   }
 
   /**
@@ -190,8 +165,13 @@ export class ConcurrencyManager {
    * @returns Account ID or undefined if not found
    */
   getSessionAccount(sessionId: string): string | undefined {
-    const slotInfo = this.sessionSlots.get(sessionId);
-    return slotInfo?.accountId;
+    // Find the first account associated with this session (legacy fallback)
+    for (const [slotKey, slotInfo] of this.sessionSlots.entries()) {
+      if (slotKey.startsWith(`${sessionId}:`)) {
+        return slotInfo.accountId;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -200,7 +180,10 @@ export class ConcurrencyManager {
    * @returns True if session has active slot
    */
   hasActiveSlot(sessionId: string): boolean {
-    return this.sessionSlots.has(sessionId);
+    for (const slotKey of this.sessionSlots.keys()) {
+      if (slotKey.startsWith(`${sessionId}:`)) return true;
+    }
+    return false;
   }
 
   /**
@@ -209,14 +192,16 @@ export class ConcurrencyManager {
    * @returns True if session is active
    */
   isSessionActive(sessionId: string): boolean {
-    const slotInfo = this.sessionSlots.get(sessionId);
-    if (!slotInfo) {
-      return false;
-    }
-
     const now = Date.now();
-    const lastHeartbeat = slotInfo.lastHeartbeat.getTime();
-    return now - lastHeartbeat < this.STALE_THRESHOLD_MS;
+    for (const [slotKey, slotInfo] of this.sessionSlots.entries()) {
+      if (slotKey.startsWith(`${sessionId}:`)) {
+        const lastHeartbeat = slotInfo.lastHeartbeat.getTime();
+        if (now - lastHeartbeat < this.STALE_THRESHOLD_MS) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /**
@@ -258,26 +243,18 @@ export class ConcurrencyManager {
     const now = Date.now();
     let cleanedCount = 0;
 
-    const staleSessions: string[] = [];
-
-    // First, identify all stale sessions
-    for (const [sessionId, slotInfo] of this.sessionSlots.entries()) {
+    for (const [slotKey, slotInfo] of Array.from(this.sessionSlots.entries())) {
       const lastHeartbeat = slotInfo.lastHeartbeat.getTime();
       const age = now - lastHeartbeat;
 
       if (age > this.STALE_THRESHOLD_MS) {
-        staleSessions.push(sessionId);
-      }
-    }
-
-    // Then clean them up one by one to avoid race conditions
-    for (const sessionId of staleSessions) {
-      const slotInfo = this.sessionSlots.get(sessionId);
-      if (slotInfo) {
+        // Extract sessionId from slotKey
+        const sessionId = slotKey.split(':')[0];
         console.warn(
           `[ConcurrencyManager] Cleaning up stale slot: ${sessionId} (age: ${Math.round((now - slotInfo.lastHeartbeat.getTime()) / 1000)}s, active requests: ${slotInfo.activeRequests})`
         );
-        await this.releaseAllSlots(sessionId);
+        // Use releaseAllSlots to ensure complete cleanup regardless of active request count
+        this.releaseAllSlots(sessionId);
         cleanedCount++;
       }
     }
@@ -341,7 +318,10 @@ export class ConcurrencyManager {
    * @returns Session slot info or undefined
    */
   getSessionInfo(sessionId: string): SessionSlotInfo | undefined {
-    return this.sessionSlots.get(sessionId);
+    for (const [slotKey, slotInfo] of this.sessionSlots.entries()) {
+      if (slotKey.startsWith(`${sessionId}:`)) return slotInfo;
+    }
+    return undefined;
   }
 
   /**
@@ -349,18 +329,25 @@ export class ConcurrencyManager {
    * @param sessionId - Session ID to force release
    */
   forceReleaseSlot(sessionId: string): void {
-    const slotInfo = this.sessionSlots.get(sessionId);
-    if (slotInfo) {
-      const account = this.poolManager.getAccount(slotInfo.accountId);
-      if (account) {
-        account.concurrency.slots?.delete(sessionId);
-        account.concurrency.current = Math.max(
-          0,
-          account.concurrency.current - 1
-        );
-        account.concurrency.lastUpdated = new Date();
+    const keysToRemove: string[] = [];
+    for (const [slotKey, slotInfo] of this.sessionSlots.entries()) {
+      if (slotKey.startsWith(`${sessionId}:`)) {
+        const account = this.poolManager.getAccount(slotInfo.accountId);
+        if (account) {
+          account.concurrency.slots?.delete(sessionId);
+          account.concurrency.current = Math.max(
+            0,
+            account.concurrency.current - 1
+          );
+          account.concurrency.lastUpdated = new Date();
+        }
+        keysToRemove.push(slotKey);
       }
-      this.sessionSlots.delete(sessionId);
+    }
+    for (const key of keysToRemove) {
+      this.sessionSlots.delete(key);
+    }
+    if (keysToRemove.length > 0) {
       console.log(
         `[ConcurrencyManager] Force released slot: ${sessionId}`
       );

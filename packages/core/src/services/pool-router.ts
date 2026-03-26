@@ -198,8 +198,8 @@ export class PoolRouter {
    * @param sessionId - Session ID
    * @param success - Whether the request was successful (default: true)
    */
-  async onRequestComplete(sessionId: string, success: boolean = true): Promise<void> {
-    const accountId = this.concurrencyManager.getSessionAccount(sessionId);
+  async onRequestComplete(sessionId: string, success: boolean = true, providedAccountId?: string): Promise<void> {
+    const accountId = providedAccountId || this.concurrencyManager.getSessionAccount(sessionId);
     if (accountId) {
       await this.concurrencyManager.releaseSlot(accountId, sessionId);
 

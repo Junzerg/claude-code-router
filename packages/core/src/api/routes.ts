@@ -103,11 +103,12 @@ async function handleTransformerEndpoint(
       if (!(req as any)._poolSlotReleased) {
         (req as any)._poolSlotReleased = true;
         const poolRouter = getPoolRouter();
-        if (poolRouter) {
-          poolRouter.onRequestComplete(sessionId).catch((err: any) => {
+        const currentAccountId = (req as any).poolAccount?.id;
+        if (poolRouter && currentAccountId) {
+          poolRouter.onRequestComplete(sessionId, true, currentAccountId).catch((err: any) => {
             req.log.error(`[PoolRouter] Failed to release slot on close: ${err.message}`);
           });
-          req.log.info(`[PoolRouter] Slot released via connection close: ${sessionId}`);
+          req.log.info(`[PoolRouter] Slot released via connection close: ${sessionId} on ${currentAccountId}`);
         }
       }
     };

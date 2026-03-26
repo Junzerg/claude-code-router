@@ -252,10 +252,11 @@ class Server {
             // Listen for raw socket close — fires on both normal end and client disconnect
             req.raw.on("close", () => {
               const sessionId = (req as any).sessionId;
+              const accountId = (req as any).poolAccount?.id;
               const poolRouter = getPoolRouter();
               if (sessionId && poolRouter && !(req as any)._poolSlotReleased) {
                 (req as any)._poolSlotReleased = true;
-                poolRouter.onRequestComplete(sessionId).catch((err: any) => {
+                poolRouter.onRequestComplete(sessionId, true, accountId).catch((err: any) => {
                   req.log.error(`[PoolRouter] Failed to release slot on close: ${err.message}`);
                 });
                 if (req.raw.destroyed || !req.raw.complete) {
@@ -286,10 +287,11 @@ class Server {
           const url = new URL(`http://127.0.0.1${req.url}`);
           if (url.pathname.endsWith("/v1/messages") || url.pathname.endsWith("/v1/chat/completions")) {
             const sessionId = (req as any).sessionId;
+            const accountId = (req as any).poolAccount?.id;
             const poolRouter = getPoolRouter();
             if (sessionId && poolRouter && !(req as any)._poolSlotReleased) {
               (req as any)._poolSlotReleased = true;
-              await poolRouter.onRequestComplete(sessionId);
+              await poolRouter.onRequestComplete(sessionId, true, accountId);
             }
           }
         }
