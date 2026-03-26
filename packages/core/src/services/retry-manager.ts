@@ -166,18 +166,28 @@ export class RetryManager {
                 console.log(
                   `[RetryManager] Switching from ${currentAccountId} to ${selection.accountId}`
                 );
+              } else {
+                console.log(
+                  `[RetryManager] Re-selected same account ${currentAccountId}, retrying`
+                );
+              }
 
-                // Update request with new account
-                const newAccount = poolRouter.getPoolManager().getAccount(selection.accountId);
-                if (newAccount) {
-                  (req as any).poolAccount = newAccount;
-                  // Reset the flag so close handlers CAN release the NEW slot
-                  (req as any)._poolSlotReleased = false;
+              // Update request with new (or same) account
+              const newAccount = poolRouter.getPoolManager().getAccount(selection.accountId);
+              if (newAccount) {
+                (req as any).poolAccount = newAccount;
+                // Reset the flag so close handlers CAN release the NEW slot
+                (req as any)._poolSlotReleased = false;
 
-                  // Wait before retry
-                  await new Promise(resolve => setTimeout(resolve, this.config.retryDelayMs));
-                  continue;
-                }
+                // Wait before retry
+                await new Promise(resolve => setTimeout(resolve, this.config.retryDelayMs));
+                continue;
+              } else {
+                // Account disappeared after selection — release the orphaned slot
+                console.warn(
+                  `[RetryManager] Account ${selection.accountId} not found after selection, releasing orphaned slot`
+                );
+                await poolRouter.onRequestComplete(sessionId, false, selection.accountId);
               }
             } catch (selectError: any) {
               console.warn(
