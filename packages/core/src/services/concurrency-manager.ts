@@ -111,15 +111,21 @@ export class ConcurrencyManager {
 
     const slotKey = `${sessionId}:${accountId}`;
     const slotInfo = this.sessionSlots.get(slotKey);
-    if (slotInfo) {
-      slotInfo.activeRequests = Math.max(0, slotInfo.activeRequests - 1);
-      if (slotInfo.activeRequests > 0) {
-        console.debug(
-          `[ConcurrencyManager] Session ${sessionId} released a request but still has ${slotInfo.activeRequests} active request(s)`
-        );
-        this.sessionSlots.set(slotKey, slotInfo);
-        return;
-      }
+    if (!slotInfo) {
+      // Slot was already released (or never acquired) — skip to avoid double-decrement
+      console.warn(
+        `[ConcurrencyManager] releaseSlot called but no slot found for ${slotKey}, skipping (possible double release)`
+      );
+      return;
+    }
+
+    slotInfo.activeRequests = Math.max(0, slotInfo.activeRequests - 1);
+    if (slotInfo.activeRequests > 0) {
+      console.debug(
+        `[ConcurrencyManager] Session ${sessionId} released a request but still has ${slotInfo.activeRequests} active request(s)`
+      );
+      this.sessionSlots.set(slotKey, slotInfo);
+      return;
     }
 
     if (account.concurrency.slots?.has(sessionId)) {
@@ -254,7 +260,7 @@ export class ConcurrencyManager {
           `[ConcurrencyManager] Cleaning up stale slot: ${sessionId} (age: ${Math.round((now - slotInfo.lastHeartbeat.getTime()) / 1000)}s, active requests: ${slotInfo.activeRequests})`
         );
         // Use releaseAllSlots to ensure complete cleanup regardless of active request count
-        this.releaseAllSlots(sessionId);
+        await this.releaseAllSlots(sessionId);
         cleanedCount++;
       }
     }

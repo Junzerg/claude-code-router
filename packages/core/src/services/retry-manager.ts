@@ -148,6 +148,9 @@ export class RetryManager {
           if (sessionId && poolRouter && currentAccountId) {
             await poolRouter.onRequestComplete(sessionId, false, currentAccountId);
             poolRouter.removeSessionBinding(sessionId);
+            // Mark as released so close handlers don't double-release the OLD slot
+            // during the retry window
+            (req as any)._poolSlotReleased = true;
           }
 
           // Try to switch to a different account
@@ -168,6 +171,8 @@ export class RetryManager {
                 const newAccount = poolRouter.getPoolManager().getAccount(selection.accountId);
                 if (newAccount) {
                   (req as any).poolAccount = newAccount;
+                  // Reset the flag so close handlers CAN release the NEW slot
+                  (req as any)._poolSlotReleased = false;
 
                   // Wait before retry
                   await new Promise(resolve => setTimeout(resolve, this.config.retryDelayMs));
