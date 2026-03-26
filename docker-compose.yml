@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  claude-code-router:
+    image: node:20-bullseye
+    container_name: claude-code-router
+    restart: unless-stopped
+    working_dir: /app
+    command: node dist/cli.js start
+    ports:
+      - "${PORT:-3456}:3456"
+    environment:
+      # 基础配置
+      - LOG=${LOG:-true}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - HOST=0.0.0.0
+      - PORT=3456
+      - APIKEY=${APIKEY}
+      - API_TIMEOUT_MS=${API_TIMEOUT_MS:-600000}
+      - PROXY_URL=${PROXY_URL:-}
+      
+      # 运行模式
+      - NON_INTERACTIVE_MODE=${NON_INTERACTIVE_MODE:-true}
+      
+      # VolcEngine 配置
+      - VOLCENGINE_API_KEY=${VOLCENGINE_API_KEY}
+      - VOLCENGINE_MODEL=${VOLCENGINE_MODEL:-deepseek-v3-2-251201}
+      
+      # Pool 配置
+      - POOL_ENABLED=${POOL_ENABLED:-true}
+      - POOL_MAX_CONCURRENCY=${POOL_MAX_CONCURRENCY:-3}
+      - POOL_BUFFER_RATIO=${POOL_BUFFER_RATIO:-0.1}
+      - POOL_SESSION_BINDING=${POOL_SESSION_BINDING:-true}
+      - POOL_SESSION_TTL=${POOL_SESSION_TTL:-60}
+      - POOL_BREAK_ON_LIMITED=${POOL_BREAK_ON_LIMITED:-true}
+      - POOL_MAX_RETRIES=${POOL_MAX_RETRIES:-3}
+      - POOL_RETRY_DELAY=${POOL_RETRY_DELAY:-1000}
+      - POOL_USAGE_SYNC=${POOL_USAGE_SYNC:-true}
+      - POOL_SYNC_INTERVAL=${POOL_SYNC_INTERVAL:-5}
+    
+    volumes:
+      # 挂载应用代码
+      - ./dist:/app/dist
+      - ./package.json:/app/package.json
+      
+      # 挂载配置目录
+      - ./config:/root/.claude-code-router
+      
+      # 挂载日志目录
+      - ./logs:/var/log/claude-router
+    
+    networks:
+      - claude-network
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3456/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  claude-network:
+    driver: bridge

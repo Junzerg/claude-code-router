@@ -1,0 +1,26 @@
+{
+  "enabled": true,
+  "accounts": [
+    {
+      "name": "账号1",
+      "platform": "zai",
+      "apiKey": "sk-ant-api03-替换为你的第一个key",
+      "apiBaseUrl": "https://api.z.ai/api/anthropic",
+      "status": "active"
+    },
+    {
+      "name": "账号2",
+      "platform": "zai",
+      "apiKey": "sk-ant-api03-替换为你的第二个key",
+      "apiBaseUrl": "https://api.z.ai/api/anthropic",
+      "status": "active"
+    },
+    {
+      "name": "账号3",
+      "platform": "zai",
+      "apiKey": "sk-ant-api03-替换为你的第三个key",
+      "apiBaseUrl": "https://api.z.ai/api/anthropic",
+      "status": "active"
+    }
+  ]
+}

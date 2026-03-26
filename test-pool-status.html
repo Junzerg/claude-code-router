@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Pool Status Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .bar-container { width: 80px; background: #ddd; height: 10px; display: inline-block; margin-left: 10px; }
+        .bar { height: 100%; }
+        .green { background: #22c55e; }
+        .yellow { background: #eab308; }
+        .red { background: #ef4444; }
+    </style>
+</head>
+<body>
+    <h1>Pool Status Test</h1>
+    <div id="loading">Loading...</div>
+
+    <h2>Summary</h2>
+    <div id="summary"></div>
+
+    <h2>Accounts</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Concurrency</th>
+                <th>Usage (5h)</th>
+                <th>Usage (Weekly)</th>
+                <th>Bound Sessions</th>
+                <th>Last Used</th>
+            </tr>
+        </thead>
+        <tbody id="accounts"></tbody>
+    </table>
+
+    <script>
+        const API_KEY = 'your-secure-api-key-123';
+        const BASE_URL = 'http://127.0.0.1:3456';
+
+        function formatPercent(percent) {
+            if (typeof percent !== 'number' || isNaN(percent)) {
+                console.error('Invalid percent:', percent);
+                return 'N/A';
+            }
+            return percent.toFixed(1) + '%';
+        }
+
+        function getUsageColor(percent) {
+            if (percent < 50) return 'green';
+            if (percent < 80) return 'yellow';
+            return 'red';
+        }
+
+        function formatTime(dateString) {
+            if (!dateString) return '-';
+            const date = new Date(dateString);
+            const now = Date.now();
+            const elapsed = now - date.getTime();
+            const minutes = Math.floor(elapsed / 60000);
+
+            if (minutes < 1) return 'Just now';
+            if (minutes < 60) return minutes + 'm ago';
+            const hours = Math.floor(minutes / 60);
+            if (hours < 24) return hours + 'h ago';
+            return date.toLocaleDateString();
+        }
+
+        async function fetchPoolStatus() {
+            try {
+                const response = await fetch(`${BASE_URL}/api/pool/status`, {
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                console.log('Pool Status Data:', data);
+
+                // Display summary
+                document.getElementById('summary').innerHTML = `
+                    <p><strong>Total Accounts:</strong> ${data.summary.total}</p>
+                    <p><strong>Active:</strong> ${data.summary.active}</p>
+                    <p><strong>Total Usage (5h):</strong> ${formatPercent(data.summary.totalUsagePercentage)}</p>
+                    <p><strong>Session Bindings:</strong> ${data.bindings.total}</p>
+                `;
+
+                // Display accounts
+                const accountsBody = document.getElementById('accounts');
+                accountsBody.innerHTML = data.accounts.map(account => {
+                    const usage5hPercent = account.usage.usagePercent;
+                    const weeklyPercent = account.usage.weeklyLimit > 0
+                        ? (account.usage.weekly / account.usage.weeklyLimit) * 100
+                        : 0;
+
+                    console.log(`Account ${account.id}:`, {
+                        usage5hPercent,
+                        weeklyPercent,
+                        usage: account.usage
+                    });
+
+                    return `
+                        <tr>
+                            <td>
+                                <strong>${account.name}</strong><br>
+                                <small>${account.id}</small>
+                            </td>
+                            <td>${account.status}</td>
+                            <td>
+                                ${account.concurrency.current} / ${account.concurrency.max}
+                                <div class="bar-container">
+                                    <div class="bar blue" style="width: ${(account.concurrency.current / account.concurrency.max) * 100}%"></div>
+                                </div>
+                            </td>
+                            <td>
+                                ${formatPercent(usage5hPercent)}
+                                <div class="bar-container">
+                                    <div class="bar ${getUsageColor(usage5hPercent)}" style="width: ${Math.min(usage5hPercent, 100)}%"></div>
+                                </div>
+                            </td>
+                            <td>
+                                ${formatPercent(weeklyPercent)}
+                                <div class="bar-container">
+                                    <div class="bar ${getUsageColor(weeklyPercent)}" style="width: ${Math.min(weeklyPercent, 100)}%"></div>
+                                </div>
+                            </td>
+                            <td>${account.boundSessions || '-'}</td>
+                            <td>${formatTime(account.lastUsedAt)}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                document.getElementById('loading').style.display = 'none';
+
+            } catch (error) {
+                console.error('Error fetching pool status:', error);
+                document.getElementById('loading').textContent = 'Error: ' + error.message;
+            }
+        }
+
+        fetchPoolStatus();
+        setInterval(fetchPoolStatus, 30000);
+    </script>
+</body>
+</html>
