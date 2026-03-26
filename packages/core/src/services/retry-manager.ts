@@ -144,9 +144,9 @@ export class RetryManager {
             );
           }
 
-          // Release current account slot
-          if (sessionId && poolRouter) {
-            await poolRouter.onRequestComplete(sessionId, false);
+          // Release current account slot (MUST pass accountId for composite key lookup)
+          if (sessionId && poolRouter && currentAccountId) {
+            await poolRouter.onRequestComplete(sessionId, false, currentAccountId);
             poolRouter.removeSessionBinding(sessionId);
           }
 
